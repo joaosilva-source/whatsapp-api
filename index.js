@@ -48,9 +48,10 @@ async function connect() {
 
 connect();
 
+// Health check - ACORDA O RENDER
 app.get('/', (req, res) => {
   const url = process.env.RENDER_EXTERNAL_URL || `https://${req.headers.host}`;
-  res.send(`Velotax WhatsApp API - ONLINE 24h\n\nPOST: ${url}/send`);
+  res.send(`Velotax WhatsApp API - ONLINE 24h\n\nPOST para: ${url}/send`);
 });
 
 app.post('/send', async (req, res) => {
@@ -71,4 +72,7 @@ app.post('/send', async (req, res) => {
   }
 });
 
-app.listen(process.env.PORT || 3000, '0.0.0.0');
+// Usa a porta do Render (pública)
+app.listen(process.env.PORT, () => {
+  console.log(`Servidor na porta ${process.env.PORT}`);
+});
