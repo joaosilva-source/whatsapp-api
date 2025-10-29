@@ -7,24 +7,22 @@ const qrcode = require('qrcode-terminal');
 const app = express();
 app.use(express.json());
 
-let sock;
+let sock = null;
+let isConnected = false;
 let reconnecting = false;
-
-// APAGA AUTH ANTIGO (SE QUISER FORÇAR NOVO QR)
-if (fs.existsSync('auth') && process.env.FORCE_NEW_QR === 'true') {
-  console.log('APAGANDO LOGIN ANTIGO...');
-  fs.rmSync('auth', { recursive: true, force: true });
-}
 
 async function connect() {
   if (reconnecting) return;
   reconnecting = true;
+  isConnected = false;
 
   const { state, saveCreds } = await useMultiFileAuthState('auth');
   
   sock = makeWASocket({
     auth: state,
     logger: pino({ level: 'silent' }),
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
   });
 
   sock.ev.on('connection.update', (update) => {
@@ -36,6 +34,7 @@ async function connect() {
     }
 
     if (connection === 'open') {
+      isConnected = true;
       reconnecting = false;
       console.log('\nWHATSAPP CONECTADO! API PRONTA!');
       const url = process.env.RENDER_EXTERNAL_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
@@ -43,6 +42,7 @@ async function connect() {
     }
 
     if (connection === 'close') {
+      isConnected = false;
       const status = lastDisconnect?.error?.output?.statusCode;
       if (status === DisconnectReason.loggedOut) {
         console.log('DESLOGADO → Apagando auth...');
@@ -52,7 +52,7 @@ async function connect() {
       setTimeout(() => {
         reconnecting = false;
         connect();
-      }, 2000); // 2 segundos
+      }, 2000);
     }
   });
 
@@ -63,14 +63,14 @@ connect();
 
 app.get('/', (req, res) => {
   const url = process.env.RENDER_EXTERNAL_URL || `https://${req.headers.host}`;
-  res.send(`Velotax WhatsApp API - ONLINE\n\nPOST: ${url}/send`);
+  res.send(`Velotax WhatsApp API - ONLINE\n\nPOST: ${url}/send\nStatus: ${isConnected ? 'CONECTADO' : 'Desconectado'}`);
 });
 
 app.post('/send', async (req, res) => {
   const { numero, mensagem } = req.body;
   console.log(`[TENTATIVA] ${numero}: ${mensagem.substring(0, 50)}...`);
-  
-  if (!sock || sock.state !== 'open') {
+
+  if (!isConnected || !sock || sock.state !== 'open') {
     console.log('[ERRO] WhatsApp offline → Reconectando...');
     return res.status(503).send('Reconectando...');
   }
@@ -92,6 +92,7 @@ app.post('/send', async (req, res) => {
   }
 });
 
-app.listen(process.env.PORT || 3000, () => {
-  console.log(`Servidor rodando na porta ${process.env.PORT || 3000}`);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
