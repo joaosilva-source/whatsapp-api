@@ -18,11 +18,13 @@ async function connect() {
   sock = makeWASocket({
     auth: state,
     logger: pino({ level: 'silent' }),
+    // REMOVIDO: printQRInTerminal → evita aviso
   });
 
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
 
+    // Mostra QR apenas se existir
     if (qr) {
       console.log('\nESCANEIE O QR CODE (SÓ NA 1ª VEZ):\n');
       qrcode.generate(qr, { small: true });
@@ -36,12 +38,10 @@ async function connect() {
 
     if (connection === 'close') {
       const status = lastDisconnect?.error?.output?.statusCode;
-      console.log(`Conexão fechada. Código: ${status}`);
-
       if (status === DisconnectReason.loggedOut) {
         console.log('Deslogado. Reescaneie o QR.');
       } else {
-        console.log('Reconectando em 10s...');
+        console.log(`Reconectando em 10s... (código: ${status})`);
         setTimeout(() => {
           reconnecting = false;
           connect();
@@ -55,8 +55,8 @@ async function connect() {
 
 connect();
 
-// Health check (evita sleep)
-app.get('/', (req, res) => res.send('WhatsApp API Online - Velotax'));
+// Health check
+app.get('/', (req, res) => res.send('Velotax WhatsApp API - ONLINE 24h'));
 
 app.post('/send', async (req, res) => {
   const { numero, mensagem } = req.body;
@@ -75,5 +75,5 @@ app.post('/send', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor na porta ${PORT}`);
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
