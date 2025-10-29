@@ -7,8 +7,12 @@ const app = express();
 app.use(express.json());
 
 let sock;
+let reconnecting = false;
 
 async function connect() {
+  if (reconnecting) return;
+  reconnecting = true;
+
   const { state, saveCreds } = await useMultiFileAuthState('auth');
   
   sock = makeWASocket({
@@ -21,23 +25,28 @@ async function connect() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('\nESCANEIE O QR CODE (PRIMEIRA VEZ NO RENDER):\n');
+      console.log('\nESCANEIE O QR CODE (APENAS NA 1ª VEZ):\n');
       qrcode.generate(qr, { small: true });
     }
 
     if (connection === 'open') {
-      console.log('\nWHATSAPP CONECTADO COM SUCESSO!');
-      console.log(`API ONLINE: https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'localhost'}:${process.env.PORT || 3000}`);
+      reconnecting = false;
+      console.log('\nWHATSAPP CONECTADO!');
+      console.log(`API ONLINE: ${process.env.RENDER_EXTERNAL_URL || 'https://' + process.env.RENDER_EXTERNAL_HOSTNAME}`);
     }
 
     if (connection === 'close') {
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('Conexão fechada:', lastDisconnect?.error?.output?.statusCode);
-      if (shouldReconnect) {
-        console.log('Reconectando em 5 segundos...');
-        setTimeout(connect, 5000);
+      const status = lastDisconnect?.error?.output?.statusCode;
+      console.log('Conexão fechada. Código:', status);
+
+      if (status === DisconnectReason.loggedOut) {
+        console.log('Deslogado. Pare o serviço e reescaneie.');
       } else {
-        console.log('Deslogado. Pare o serviço e reescaneie o QR.');
+        console.log('Reconectando em 10s...');
+        setTimeout(() => {
+          reconnecting = false;
+          connect();
+        }, 10000);
       }
     }
   });
@@ -47,22 +56,25 @@ async function connect() {
 
 connect();
 
+// Health check (evita sleep)
+app.get('/', (req, res) => res.send('WhatsApp API Online'));
+
 app.post('/send', async (req, res) => {
   const { numero, mensagem } = req.body;
-  if (!sock || sock.state !== 'open') {
-    return res.status(503).send('WhatsApp offline. Reconectando...');
+  
+  if (!sock || !sock.user) {
+    return res.status(503).send('Reconectando...');
   }
 
   try {
     await sock.sendMessage(`${numero}@s.whatsapp.net`, { text: mensagem });
-    res.send('Enviado com sucesso!');
+    res.send('Enviado!');
   } catch (e) {
     res.status(500).send('Erro: ' + e.message);
   }
 });
 
-// Usa a porta do Render
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
+  console.log(`Servidor na porta ${PORT}`);
 });
