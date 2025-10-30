@@ -97,3 +97,22 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
+
+app.get('/grupos', async (req, res) => {
+  if (!isConnected || !sock) {
+    return res.status(503).send('WhatsApp desconectado');
+  }
+
+  try {
+    const grupos = await sock.groupFetchAllParticipating();
+    const lista = Object.values(grupos).map(g => ({
+      nome: g.subject,
+      id: g.id
+    }));
+
+    console.log(lista); // aparece nos logs do Render
+    res.json(lista);
+  } catch (e) {
+    res.status(500).send('Erro: ' + e.message);
+  }
+});
