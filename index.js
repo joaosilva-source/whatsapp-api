@@ -67,23 +67,17 @@ app.get('/', (req, res) => {
 });
 
 app.post('/send', async (req, res) => {
-  const { numero, mensagem } = req.body;
-  console.log(`[TENTATIVA] ${numero}: ${mensagem.substring(0, 50)}...`);
+  // O payload agora deve aceitar 'jid' (ID do grupo) e 'mensagem'
+  const { jid, mensagem } = req.body; // <-- MUDANÇA AQUI: Esperando 'jid' em vez de 'numero'
+  console.log(`[TENTATIVA] ${jid}: ${mensagem.substring(0, 50)}...`);
 
-  if (!isConnected || !sock || sock.state !== 'open') {
-    console.log('[ERRO] WhatsApp offline → Reconectando...');
-    return res.status(503).send('Reconectando...');
-  }
+  // ... (código de verificação de conexão) ...
 
   try {
-    const jid = `${numero}@s.whatsapp.net`;
-    const exists = await sock.onWhatsApp(jid);
-    if (!exists?.exists) {
-      console.log(`[ERRO] ${numero} não tem WhatsApp`);
-      return res.status(400).send('Número sem WhatsApp');
-    }
+    // O JID já está no formato correto (ID do grupo ou número individual)
+    // Não precisamos mais do sock.onWhatsApp(jid) para grupos.
 
-    await sock.sendMessage(jid, { text: mensagem });
+    await sock.sendMessage(jid, { text: mensagem }); // <-- Envia para o JID
     console.log('[SUCESSO] Enviado!');
     res.send('Enviado!');
   } catch (e) {
