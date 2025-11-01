@@ -17,12 +17,15 @@ async function connect() {
   isConnected = false;
 
   const { state, saveCreds } = await useMultiFileAuthState('auth');
-  
+
   sock = makeWASocket({
     auth: state,
     logger: pino({ level: 'silent' }),
+    browser: ['Chrome', 'Ubuntu', '20.04'],
+    keepAliveIntervalMs: 10000,
+    syncFullHistory: true,
     connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000
   });
 
   sock.ev.on('connection.update', (update) => {
@@ -43,12 +46,17 @@ async function connect() {
 
     if (connection === 'close') {
       isConnected = false;
-      const status = lastDisconnect?.error?.output?.statusCode;
-      if (status === DisconnectReason.loggedOut) {
-        console.log('DESLOGADO → Apagando auth...');
+
+      const reason = lastDisconnect?.error?.output?.statusCode;
+      console.log("Status de disconnect:", reason);
+
+      if (reason === DisconnectReason.loggedOut) {
+        console.log("DESLOGADO -> apagando auth e pedindo QR novamente...");
         fs.rmSync('auth', { recursive: true, force: true });
+      } else {
+        console.log("Desconectado -> tentando reconectar sem pedir QR...");
       }
-      console.log(`DESCONECTADO (${status || 'desconhecido'}) → Reconectando em 2s...`);
+
       setTimeout(() => {
         reconnecting = false;
         connect();
@@ -110,7 +118,7 @@ app.get('/grupos', async (req, res) => {
       id: g.id
     }));
 
-    console.log(lista); // aparece nos logs do Render
+    console.log(lista);
     res.json(lista);
   } catch (e) {
     res.status(500).send('Erro: ' + e.message);
