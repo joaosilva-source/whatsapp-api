@@ -1,20 +1,21 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('[whiskeysockets/baileys');](cci:4://file://whiskeysockets/baileys');:0:0-0:0)
 const pino = require('pino');
 const fs = require('fs');
 const qrcode = require('qrcode-terminal');
 const cors = require('cors');
+
 const app = express();
 app.use(express.json());
 
-// enquanto testa, pode liberar geral:
+// Libera CORS (enquanto testa). Depois restrinja para o domínio da Vercel.
 app.use(cors());
-// depois restrinja:
-// app.use(cors({ origin: ['https://SEU-SITE-NA-VERCEL.vercel.app', 'http://localhost:3000'] }));
-
-
-const app = express();
-app.use(express.json());
+// Exemplo restrito:
+// app.use(cors({
+//   origin: ['https://SEU-SITE-NA-VERCEL.vercel.app', 'http://localhost:3000'],
+//   methods: ['GET', 'POST'],
+//   allowedHeaders: ['Content-Type'],
+// }));
 
 let sock = null;
 let isConnected = false;
@@ -50,20 +51,20 @@ async function connect() {
       reconnecting = false;
       console.log('\nWHATSAPP CONECTADO! API PRONTA!');
       const url = process.env.RENDER_EXTERNAL_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
-      console.log(`API ONLINE: ${url}/send`);
+      if (url) console.log(`API ONLINE: ${url}/send`);
     }
 
     if (connection === 'close') {
       isConnected = false;
 
       const reason = lastDisconnect?.error?.output?.statusCode;
-      console.log("Status de disconnect:", reason);
+      console.log('Status de disconnect:', reason);
 
       if (reason === DisconnectReason.loggedOut) {
-        console.log("DESLOGADO -> apagando auth e pedindo QR novamente...");
+        console.log('DESLOGADO -> apagando auth e pedindo QR novamente...');
         fs.rmSync('auth', { recursive: true, force: true });
       } else {
-        console.log("Desconectado -> tentando reconectar sem pedir QR...");
+        console.log('Desconectado -> tentando reconectar sem pedir QR...');
       }
 
       setTimeout(() => {
@@ -95,24 +96,23 @@ app.post('/send', async (req, res) => {
   try {
     let destinatario = destino;
 
-    if (!destinatario.includes('@')) {
-      destinatario = destinatario.includes('-')
-        ? `${destinatario}@g.us`
-        : `${destinatario}@s.whatsapp.net`;
+    if (!destinatario || destinatario.length === 0) {
+      return res.status(400).send('Destino inválido');
     }
 
-    await sock.sendMessage(destinatario, { text: mensagem });
+    if (!destinatario.includes('['))](cci:4://file://')):0:0-0:0) {
+      destinatario = destinatario.includes('-')
+        ? `${destinatario}[g.us](cci:4://file://g.us:0:0-0:0)`
+        : `${destinatario}[s.whatsapp.net](cci:4://file://s.whatsapp.net:0:0-0:0)`;
+    }
+
+    await sock.sendMessage(destinatario, { text: mensagem || '' });
     console.log('[SUCESSO] Enviado!');
     res.send('Enviado!');
   } catch (e) {
     console.log('[FALHA]', e);
     res.status(500).send('Erro: ' + e.message);
   }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
 });
 
 app.get('/grupos', async (req, res) => {
@@ -122,14 +122,4 @@ app.get('/grupos', async (req, res) => {
 
   try {
     const grupos = await sock.groupFetchAllParticipating();
-    const lista = Object.values(grupos).map(g => ({
-      nome: g.subject,
-      id: g.id
-    }));
-
-    console.log(lista);
-    res.json(lista);
-  } catch (e) {
-    res.status(500).send('Erro: ' + e.message);
-  }
-});
+    const lista = Object.values(gr
