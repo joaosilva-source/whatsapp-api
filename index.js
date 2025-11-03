@@ -1,5 +1,5 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('[whiskeysockets/baileys');](cci:4://file://whiskeysockets/baileys');:0:0-0:0)
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
 const qrcode = require('qrcode-terminal');
@@ -8,12 +8,14 @@ const cors = require('cors');
 const app = express();
 app.use(express.json());
 
-// Libera CORS (enquanto testa). Depois restrinja para o domínio da Vercel.
+app.use(cors()); // liberar geral enquanto testa
+
+// CORS (liberar geral durante testes; depois restrinja para o domínio da Vercel)
 app.use(cors());
 // Exemplo restrito:
 // app.use(cors({
 //   origin: ['https://SEU-SITE-NA-VERCEL.vercel.app', 'http://localhost:3000'],
-//   methods: ['GET', 'POST'],
+//   methods: ['GET','POST'],
 //   allowedHeaders: ['Content-Type'],
 // }));
 
@@ -100,10 +102,10 @@ app.post('/send', async (req, res) => {
       return res.status(400).send('Destino inválido');
     }
 
-    if (!destinatario.includes('['))](cci:4://file://')):0:0-0:0) {
+    if (!destinatario.includes('@')) {
       destinatario = destinatario.includes('-')
-        ? `${destinatario}[g.us](cci:4://file://g.us:0:0-0:0)`
-        : `${destinatario}[s.whatsapp.net](cci:4://file://s.whatsapp.net:0:0-0:0)`;
+        ? `${destinatario}@g.us`
+        : `${destinatario}@s.whatsapp.net`;
     }
 
     await sock.sendMessage(destinatario, { text: mensagem || '' });
@@ -122,4 +124,17 @@ app.get('/grupos', async (req, res) => {
 
   try {
     const grupos = await sock.groupFetchAllParticipating();
-    const lista = Object.values(gr
+    const lista = Object.values(grupos).map(g => ({
+      nome: g.subject,
+      id: g.id
+    }));
+    res.json(lista);
+  } catch (e) {
+    res.status(500).send('Erro: ' + e.message);
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+});
