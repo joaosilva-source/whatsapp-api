@@ -3,6 +3,17 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const pino = require('pino');
 const fs = require('fs');
 const qrcode = require('qrcode-terminal');
+const cors = require('cors');
+
+app.use(cors({
+  origin: [
+    'https://SEU-SITE-NA-VERCEL.vercel.app',
+    'http://localhost:3000'
+  ],
+  methods: ['GET','POST'],
+  allowedHeaders: ['Content-Type'],
+}));
+
 
 const app = express();
 app.use(express.json());
