@@ -2,7 +2,7 @@
 // Node >= 18 (fetch nativo)
 
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('[whiskeysockets/baileys');](cci:4://file://whiskeysockets/baileys');:0:0-0:0)
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
 const qrcode = require('qrcode-terminal');
@@ -11,14 +11,8 @@ const cors = require('cors');
 const app = express();
 app.use(express.json());
 
-// CORS (em testes, liberar geral; depois restrinja)
+// CORS (abra geral em testes; restrinja em produção)
 app.use(cors());
-// Exemplo restrito:
-// app.use(cors({
-//   origin: ['https://SEU-SITE.vercel.app', 'http://localhost:3000'],
-//   methods: ['GET', 'POST'],
-//   allowedHeaders: ['Content-Type'],
-// }));
 
 let sock = null;
 let isConnected = false;
@@ -78,7 +72,7 @@ async function connect() {
     }
   });
 
-  // Listener de reações (formato update): marcar “feito” ao receber ✅ do número autorizado
+  // Listener de reações (algumas versões entregam via messages.update)
   sock.ev.on('messages.update', async (updates) => {
     try {
       for (const u of updates) {
@@ -89,8 +83,8 @@ async function connect() {
         const key = rx.key;
         const reactorJid = key?.participant || key?.remoteJid || '';
         const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
-
         const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
+
         if (emoji === '✅' && allowed && (reactorDigits.endsWith(allowed) || reactorDigits === allowed)) {
           const panel = process.env.PANEL_URL; // ex.: https://velotax-painel.vercel.app
           const waMessageId = key?.id;
@@ -109,7 +103,7 @@ async function connect() {
     }
   });
 
-  // Listener extra (formato upsert): algumas versões do Baileys entregam reações aqui
+  // Listener extra: outras versões entregam reações via messages.upsert
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     try {
       if (!messages || !messages.length) return;
@@ -169,14 +163,40 @@ app.post('/send', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Destino inválido' });
     }
 
-    if (!destinatario.includes('['))](cci:4://file://')):0:0-0:0) {
+    if (!destinatario.includes('@')) {
       destinatario = destinatario.includes('-')
-        ? `${destinatario}[g.us](cci:4://file://g.us:0:0-0:0)`
-        : `${destinatario}[s.whatsapp.net](cci:4://file://s.whatsapp.net:0:0-0:0)`;
+        ? `${destinatario}@g.us`
+        : `${destinatario}@s.whatsapp.net`;
     }
 
     const sent = await sock.sendMessage(destinatario, { text: mensagem || '' });
     const messageId = sent?.key?.id || null;
 
     console.log('[SUCESSO] Enviado! messageId:', messageId);
-    res.json({ ok: true, messageId
+    res.json({ ok: true, messageId });
+  } catch (e) {
+    console.log('[FALHA]', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Lista de grupos (opcional)
+app.get('/grupos', async (req, res) => {
+  if (!isConnected || !sock) {
+    return res.status(503).json({ ok: false, error: 'WhatsApp desconectado' });
+  }
+
+  try {
+    const grupos = await sock.groupFetchAllParticipating();
+    const lista = Object.values(grupos).map(g => ({
+      nome: g.subject,
+      id: g.id
+    }));
+    res.json(lista);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log('API escutando porta', PORT));
