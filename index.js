@@ -2,7 +2,7 @@
 // Node >= 18 (fetch nativo)
 
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('[whiskeysockets/baileys');](cci:4://file://whiskeysockets/baileys');:0:0-0:0)
 const pino = require('pino');
 const fs = require('fs');
 const qrcode = require('qrcode-terminal');
@@ -78,15 +78,15 @@ async function connect() {
     }
   });
 
-  // Listener de reações: marcar “feito” ao receber ✅ do número autorizado
+  // Listener de reações (formato update): marcar “feito” ao receber ✅ do número autorizado
   sock.ev.on('messages.update', async (updates) => {
     try {
       for (const u of updates) {
-        const rm = u?.update?.reactionMessage;
-        if (!rm) continue;
+        const rx = u?.update?.reactionMessage;
+        if (!rx) continue;
 
-        const emoji = rm.text;
-        const key = rm.key;
+        const emoji = rx.text;
+        const key = rx.key;
         const reactorJid = key?.participant || key?.remoteJid || '';
         const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
 
@@ -95,7 +95,7 @@ async function connect() {
           const panel = process.env.PANEL_URL; // ex.: https://velotax-painel.vercel.app
           const waMessageId = key?.id;
           if (panel && waMessageId) {
-            console.log('[AUTO-STATUS] Chamando painel para marcar FEITO', { waMessageId, reactorDigits });
+            console.log('[AUTO-STATUS/UPDATE] Marcando FEITO via reação ✅', { waMessageId, reactorDigits });
             await fetch(`${panel}/api/requests/auto-status`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -105,7 +105,39 @@ async function connect() {
         }
       }
     } catch (e) {
-      console.log('[REACTION ERROR]', e.message);
+      console.log('[REACTION UPDATE ERROR]', e.message);
+    }
+  });
+
+  // Listener extra (formato upsert): algumas versões do Baileys entregam reações aqui
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    try {
+      if (!messages || !messages.length) return;
+      for (const msg of messages) {
+        const rx = msg?.message?.reactionMessage;
+        if (!rx) continue;
+
+        const emoji = rx.text;
+        const key = rx.key;
+        const reactorJid = key?.participant || key?.remoteJid || '';
+        const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
+        const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
+
+        if (emoji === '✅' && allowed && (reactorDigits.endsWith(allowed) || reactorDigits === allowed)) {
+          const panel = process.env.PANEL_URL; // ex.: https://velotax-painel.vercel.app
+          const waMessageId = key?.id;
+          if (panel && waMessageId) {
+            console.log('[AUTO-STATUS/UPSERT] Marcando FEITO via reação ✅', { waMessageId, reactorDigits });
+            await fetch(`${panel}/api/requests/auto-status`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ waMessageId, reactor: reactorDigits, status: 'feito' })
+            }).catch(() => {});
+          }
+        }
+      }
+    } catch (e) {
+      console.log('[REACTION UPSERT ERROR]', e.message);
     }
   });
 
@@ -137,40 +169,14 @@ app.post('/send', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Destino inválido' });
     }
 
-    if (!destinatario.includes('@')) {
+    if (!destinatario.includes('['))](cci:4://file://')):0:0-0:0) {
       destinatario = destinatario.includes('-')
-        ? `${destinatario}@g.us`
-        : `${destinatario}@s.whatsapp.net`;
+        ? `${destinatario}[g.us](cci:4://file://g.us:0:0-0:0)`
+        : `${destinatario}[s.whatsapp.net](cci:4://file://s.whatsapp.net:0:0-0:0)`;
     }
 
     const sent = await sock.sendMessage(destinatario, { text: mensagem || '' });
     const messageId = sent?.key?.id || null;
 
     console.log('[SUCESSO] Enviado! messageId:', messageId);
-    res.json({ ok: true, messageId });
-  } catch (e) {
-    console.log('[FALHA]', e);
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Lista de grupos (opcional)
-app.get('/grupos', async (req, res) => {
-  if (!isConnected || !sock) {
-    return res.status(503).json({ ok: false, error: 'WhatsApp desconectado' });
-  }
-
-  try {
-    const grupos = await sock.groupFetchAllParticipating();
-    const lista = Object.values(grupos).map(g => ({
-      nome: g.subject,
-      id: g.id
-    }));
-    res.json(lista);
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('API escutando porta', PORT));
+    res.json({ ok: true, messageId
