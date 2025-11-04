@@ -1,3 +1,6 @@
+// index.js - Backend Render (Express + Baileys)
+// Node >= 18 (fetch nativo)
+
 const express = require('express');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
@@ -8,14 +11,12 @@ const cors = require('cors');
 const app = express();
 app.use(express.json());
 
-app.use(cors()); // liberar geral enquanto testa
-
-// CORS (liberar geral durante testes; depois restrinja para o domínio da Vercel)
+// CORS (em testes, liberar geral; depois restrinja)
 app.use(cors());
 // Exemplo restrito:
 // app.use(cors({
-//   origin: ['https://SEU-SITE-NA-VERCEL.vercel.app', 'http://localhost:3000'],
-//   methods: ['GET','POST'],
+//   origin: ['https://SEU-SITE.vercel.app', 'http://localhost:3000'],
+//   methods: ['GET', 'POST'],
 //   allowedHeaders: ['Content-Type'],
 // }));
 
@@ -40,6 +41,7 @@ async function connect() {
     defaultQueryTimeoutMs: 60000
   });
 
+  // Conexão / QR
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
 
@@ -76,30 +78,63 @@ async function connect() {
     }
   });
 
+  // Listener de reações: marcar “feito” ao receber ✅ do número autorizado
+  sock.ev.on('messages.update', async (updates) => {
+    try {
+      for (const u of updates) {
+        const rm = u?.update?.reactionMessage;
+        if (!rm) continue;
+
+        const emoji = rm.text;
+        const key = rm.key;
+        const reactorJid = key?.participant || key?.remoteJid || '';
+        const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
+
+        const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
+        if (emoji === '✅' && allowed && (reactorDigits.endsWith(allowed) || reactorDigits === allowed)) {
+          const panel = process.env.PANEL_URL; // ex.: https://velotax-painel.vercel.app
+          const waMessageId = key?.id;
+          if (panel && waMessageId) {
+            console.log('[AUTO-STATUS] Chamando painel para marcar FEITO', { waMessageId, reactorDigits });
+            await fetch(`${panel}/api/requests/auto-status`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ waMessageId, reactor: reactorDigits, status: 'feito' })
+            }).catch(() => {});
+          }
+        }
+      }
+    } catch (e) {
+      console.log('[REACTION ERROR]', e.message);
+    }
+  });
+
   sock.ev.on('creds.update', saveCreds);
 }
 
 connect();
 
+// Health
 app.get('/', (req, res) => {
   const url = process.env.RENDER_EXTERNAL_URL || `https://${req.headers.host}`;
   res.send(`Velotax WhatsApp API - ONLINE\n\nPOST: ${url}/send\nStatus: ${isConnected ? 'CONECTADO' : 'Desconectado'}`);
 });
 
+// Envio: retorna messageId para o painel salvar
 app.post('/send', async (req, res) => {
   const { jid, numero, mensagem } = req.body;
   const destino = jid || numero;
-  console.log(`[TENTATIVA] ${destino}: ${mensagem?.substring(0, 50)}...`);
+  console.log(`[TENTATIVA] ${destino}: ${String(mensagem || '').substring(0, 80)}...`);
 
   if (!isConnected || !sock) {
-    return res.status(503).send('WhatsApp desconectado');
+    return res.status(503).json({ ok: false, error: 'WhatsApp desconectado' });
   }
 
   try {
     let destinatario = destino;
 
     if (!destinatario || destinatario.length === 0) {
-      return res.status(400).send('Destino inválido');
+      return res.status(400).json({ ok: false, error: 'Destino inválido' });
     }
 
     if (!destinatario.includes('@')) {
@@ -108,18 +143,21 @@ app.post('/send', async (req, res) => {
         : `${destinatario}@s.whatsapp.net`;
     }
 
-    await sock.sendMessage(destinatario, { text: mensagem || '' });
-    console.log('[SUCESSO] Enviado!');
-    res.send('Enviado!');
+    const sent = await sock.sendMessage(destinatario, { text: mensagem || '' });
+    const messageId = sent?.key?.id || null;
+
+    console.log('[SUCESSO] Enviado! messageId:', messageId);
+    res.json({ ok: true, messageId });
   } catch (e) {
     console.log('[FALHA]', e);
-    res.status(500).send('Erro: ' + e.message);
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
+// Lista de grupos (opcional)
 app.get('/grupos', async (req, res) => {
   if (!isConnected || !sock) {
-    return res.status(503).send('WhatsApp desconectado');
+    return res.status(503).json({ ok: false, error: 'WhatsApp desconectado' });
   }
 
   try {
@@ -130,11 +168,9 @@ app.get('/grupos', async (req, res) => {
     }));
     res.json(lista);
   } catch (e) {
-    res.status(500).send('Erro: ' + e.message);
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log('API escutando porta', PORT));
