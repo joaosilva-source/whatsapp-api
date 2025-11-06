@@ -9,9 +9,9 @@ const qrcode = require('qrcode-terminal');
 const cors = require('cors');
 
 const app = express();
-app.use(express.json());
+// Aumentar limite do body para suportar imagens em base64
+app.use(express.json({ limit: '15mb' }));
 
-// CORS (abra geral em testes; restrinja em produção)
 app.use(cors());
 
 let sock = null;
@@ -148,7 +148,7 @@ app.get('/', (req, res) => {
 
 // Envio: retorna messageId para o painel salvar
 app.post('/send', async (req, res) => {
-  const { jid, numero, mensagem } = req.body;
+  const { jid, numero, mensagem, imagens } = req.body || {};
   const destino = jid || numero;
   console.log(`[TENTATIVA] ${destino}: ${String(mensagem || '').substring(0, 80)}...`);
 
@@ -169,8 +169,44 @@ app.post('/send', async (req, res) => {
         : `${destinatario}@s.whatsapp.net`;
     }
 
-    const sent = await sock.sendMessage(destinatario, { text: mensagem || '' });
-    const messageId = sent?.key?.id || null;
+    let messageId = null;
+
+    // Se houver imagens, enviar a primeira com legenda; demais sem legenda
+    const imgs = Array.isArray(imagens) ? imagens : [];
+    if (imgs.length > 0) {
+      try {
+        const first = imgs[0];
+        const buf = Buffer.from(String(first?.data || ''), 'base64');
+        const sentFirst = await sock.sendMessage(destinatario, {
+          image: buf,
+          mimetype: first?.type || 'image/jpeg',
+          caption: mensagem || ''
+        });
+        messageId = sentFirst?.key?.id || null;
+
+        // Enviar demais imagens sem legenda
+        for (let i = 1; i < imgs.length; i++) {
+          const it = imgs[i];
+          try {
+            const b = Buffer.from(String(it?.data || ''), 'base64');
+            await sock.sendMessage(destinatario, {
+              image: b,
+              mimetype: it?.type || 'image/jpeg'
+            });
+          } catch (ie) {
+            console.log('[WARN] Falha ao enviar imagem extra', ie?.message);
+          }
+        }
+      } catch (imgErr) {
+        console.log('[WARN] Falha envio de imagem; caindo para texto', imgErr?.message);
+      }
+    }
+
+    // Se não houve imagem enviada (ou falhou), enviar texto
+    if (!messageId) {
+      const sent = await sock.sendMessage(destinatario, { text: mensagem || '' });
+      messageId = sent?.key?.id || null;
+    }
 
     console.log('[SUCESSO] Enviado! messageId:', messageId);
     res.json({ ok: true, messageId });
