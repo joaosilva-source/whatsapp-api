@@ -77,6 +77,12 @@ async function connect() {
     try {
       for (const u of updates) {
         const rx = u?.update?.reactionMessage;
+        if (!rx) {
+          // log ponta de prova
+          if (u && u.update && u.update.message) {
+            console.log('[REACTION DEBUG][update] update.message keys:', Object.keys(u.update.message));
+          }
+        }
         if (!rx) continue;
 
         const emoji = rx.text;
@@ -84,6 +90,13 @@ async function connect() {
         const reactorJid = key?.participant || key?.remoteJid || '';
         const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
         const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
+
+        console.log('[REACTION][update]', {
+          emoji,
+          reactorDigits,
+          keyId: key?.id,
+          allowed,
+        });
 
         if (emoji === '✅' && allowed && (reactorDigits.endsWith(allowed) || reactorDigits === allowed)) {
           const panel = process.env.PANEL_URL; // ex.: https://velotax-painel.vercel.app
@@ -109,6 +122,11 @@ async function connect() {
       if (!messages || !messages.length) return;
       for (const msg of messages) {
         const rx = msg?.message?.reactionMessage;
+        if (!rx) {
+          if (msg && msg.message) {
+            console.log('[REACTION DEBUG][upsert] message keys:', Object.keys(msg.message));
+          }
+        }
         if (!rx) continue;
 
         const emoji = rx.text;
@@ -116,6 +134,13 @@ async function connect() {
         const reactorJid = key?.participant || key?.remoteJid || '';
         const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
         const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
+
+        console.log('[REACTION][upsert]', {
+          emoji,
+          reactorDigits,
+          keyId: key?.id,
+          allowed,
+        });
 
         if (emoji === '✅' && allowed && (reactorDigits.endsWith(allowed) || reactorDigits === allowed)) {
           const panel = process.env.PANEL_URL; // ex.: https://velotax-painel.vercel.app
