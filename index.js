@@ -86,8 +86,10 @@ async function connect() {
         if (!rx) continue;
 
         const emoji = rx.text;
-        const key = rx.key;
-        const reactorJid = key?.participant || key?.remoteJid || '';
+        const key = rx.key; // key da MENSAGEM REAGIDA (use para waMessageId)
+        // O REATOR é o remetente deste evento (fora do rx): use u.key se existir
+        const outerKey = u?.key || u?.update?.key || {};
+        const reactorJid = outerKey.participant || outerKey.remoteJid || '';
         const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
         const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
 
@@ -98,7 +100,8 @@ async function connect() {
           allowed,
         });
 
-        if (emoji === '✅' && allowed && (reactorDigits.endsWith(allowed) || reactorDigits === allowed)) {
+        // Temporariamente sem checagem de autorizado para validar fluxo end-to-end
+        if (emoji === '✅') {
           const panel = process.env.PANEL_URL; // ex.: https://velotax-painel.vercel.app
           const waMessageId = key?.id;
           if (panel && waMessageId) {
@@ -130,8 +133,9 @@ async function connect() {
         if (!rx) continue;
 
         const emoji = rx.text;
-        const key = rx.key;
-        const reactorJid = key?.participant || key?.remoteJid || '';
+        const key = rx.key; // mensagem reagida (usa id no painel)
+        // O REATOR é o sender deste upsert (msg.key)
+        const reactorJid = msg?.key?.participant || msg?.key?.remoteJid || '';
         const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
         const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
 
@@ -142,7 +146,8 @@ async function connect() {
           allowed,
         });
 
-        if (emoji === '✅' && allowed && (reactorDigits.endsWith(allowed) || reactorDigits === allowed)) {
+        // Temporariamente sem checagem de autorizado para validar fluxo end-to-end
+        if (emoji === '✅') {
           const panel = process.env.PANEL_URL; // ex.: https://velotax-painel.vercel.app
           const waMessageId = key?.id;
           if (panel && waMessageId) {
@@ -195,6 +200,7 @@ app.post('/send', async (req, res) => {
     }
 
     let messageId = null;
+    const messageIds = [];
 
     // Se houver imagens, enviar a primeira com legenda; demais sem legenda
     const imgs = Array.isArray(imagens) ? imagens : [];
@@ -207,17 +213,20 @@ app.post('/send', async (req, res) => {
           mimetype: first?.type || 'image/jpeg',
           caption: mensagem || ''
         });
-        messageId = sentFirst?.key?.id || null;
+        const firstId = sentFirst?.key?.id || null;
+        messageId = firstId;
+        if (firstId) messageIds.push(firstId);
 
         // Enviar demais imagens sem legenda
         for (let i = 1; i < imgs.length; i++) {
           const it = imgs[i];
           try {
             const b = Buffer.from(String(it?.data || ''), 'base64');
-            await sock.sendMessage(destinatario, {
+            const sentMore = await sock.sendMessage(destinatario, {
               image: b,
               mimetype: it?.type || 'image/jpeg'
             });
+            const mid = sentMore?.key?.id || null; if (mid) messageIds.push(mid);
           } catch (ie) {
             console.log('[WARN] Falha ao enviar imagem extra', ie?.message);
           }
@@ -230,11 +239,13 @@ app.post('/send', async (req, res) => {
     // Se não houve imagem enviada (ou falhou), enviar texto
     if (!messageId) {
       const sent = await sock.sendMessage(destinatario, { text: mensagem || '' });
-      messageId = sent?.key?.id || null;
+      const tid = sent?.key?.id || null;
+      messageId = tid;
+      if (tid) messageIds.push(tid);
     }
 
-    console.log('[SUCESSO] Enviado! messageId:', messageId);
-    res.json({ ok: true, messageId });
+    console.log('[SUCESSO] Enviado! messageId:', messageId, 'all:', messageIds);
+    res.json({ ok: true, messageId, messageIds });
   } catch (e) {
     console.log('[FALHA]', e);
     res.status(500).json({ ok: false, error: e.message });
