@@ -124,41 +124,66 @@ async function connect() {
     try {
       if (!messages || !messages.length) return;
       for (const msg of messages) {
-        const rx = msg?.message?.reactionMessage;
+        const m = msg?.message || {};
+        const rx = m?.reactionMessage;
         if (!rx) {
           if (msg && msg.message) {
             console.log('[REACTION DEBUG][upsert] message keys:', Object.keys(msg.message));
           }
-        }
-        if (!rx) continue;
+        } else {
+          const emoji = rx.text;
+          const key = rx.key; // mensagem reagida (usa id no painel)
+          // O REATOR é o sender deste upsert (msg.key)
+          const reactorJid = msg?.key?.participant || msg?.key?.remoteJid || '';
+          const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
+          const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
 
-        const emoji = rx.text;
-        const key = rx.key; // mensagem reagida (usa id no painel)
-        // O REATOR é o sender deste upsert (msg.key)
-        const reactorJid = msg?.key?.participant || msg?.key?.remoteJid || '';
-        const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
-        const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
+          console.log('[REACTION][upsert]', {
+            emoji,
+            reactorDigits,
+            keyId: key?.id,
+            allowed,
+          });
 
-        console.log('[REACTION][upsert]', {
-          emoji,
-          reactorDigits,
-          keyId: key?.id,
-          allowed,
-        });
-
-        // Temporariamente sem checagem de autorizado para validar fluxo end-to-end
-        if (emoji === '✅') {
-          const panel = process.env.PANEL_URL; // ex.: https://velotax-painel.vercel.app
-          const waMessageId = key?.id;
-          if (panel && waMessageId) {
-            console.log('[AUTO-STATUS/UPSERT] Marcando FEITO via reação ✅', { waMessageId, reactorDigits });
-            await fetch(`${panel}/api/requests/auto-status`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ waMessageId, reactor: reactorDigits, status: 'feito' })
-            }).catch(() => {});
+          // Temporariamente sem checagem de autorizado para validar fluxo end-to-end
+          if (emoji === '✅') {
+            const panel = process.env.PANEL_URL; // ex.: https://velotax-painel.vercel.app
+            const waMessageId = key?.id;
+            if (panel && waMessageId) {
+              console.log('[AUTO-STATUS/UPSERT] Marcando FEITO via reação ✅', { waMessageId, reactorDigits });
+              await fetch(`${panel}/api/requests/auto-status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ waMessageId, reactor: reactorDigits, status: 'feito' })
+              }).catch(() => {});
+            }
           }
         }
+
+        // Hook de reply: quando alguém responde (cita) uma mensagem enviada pelo bot
+        try {
+          const text =
+            m.conversation ||
+            m.extendedTextMessage?.text ||
+            m.imageMessage?.caption ||
+            m.videoMessage?.caption || '';
+          const quoted =
+            m.extendedTextMessage?.contextInfo?.stanzaId ||
+            m.extendedTextMessage?.contextInfo?.quotedMessage?.key?.id ||
+            null;
+          if (text && quoted) {
+            const reactorJid = msg?.key?.participant || msg?.key?.remoteJid || '';
+            const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
+            const panel = process.env.PANEL_URL;
+            if (panel) {
+              await fetch(`${panel}/api/requests/reply`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ waMessageId: quoted, reactor: reactorDigits, text })
+              }).catch(() => {});
+            }
+          }
+        } catch {}
       }
     } catch (e) {
       console.log('[REACTION UPSERT ERROR]', e.message);
