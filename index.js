@@ -18,6 +18,23 @@ let sock = null;
 let isConnected = false;
 let reconnecting = false;
 
+// Meta e stream de respostas em memória (não persistente)
+const metaByMessageId = new Map(); // messageId -> { cpf, solicitacao }
+const recentReplies = []; // ring buffer simples
+const recentMax = 200;
+const sseClients = new Set(); // Set<res>
+
+function publishReply(ev) {
+  try {
+    recentReplies.push(ev);
+    if (recentReplies.length > recentMax) recentReplies.shift();
+    const data = `event: reply\n` + `data: ${JSON.stringify(ev)}\n\n`;
+    for (const res of sseClients) {
+      try { res.write(data); } catch {}
+    }
+  } catch {}
+}
+
 async function connect() {
   if (reconnecting) return;
   reconnecting = true;
@@ -34,6 +51,27 @@ async function connect() {
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000
   });
+
+// Endpoint para obter últimas respostas (útil para debug/consumo inicial)
+app.get('/replies/recent', (req, res) => {
+  res.json(recentReplies);
+});
+
+// SSE: stream de replies em tempo real
+app.get('/stream/replies', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  sseClients.add(res);
+  // enviar estado inicial
+  try {
+    res.write(`event: init\n` + `data: ${JSON.stringify(recentReplies)}\n\n`);
+  } catch {}
+  req.on('close', () => {
+    try { sseClients.delete(res); } catch {}
+  });
+});
 
   // Conexão / QR
   sock.ev.on('connection.update', (update) => {
@@ -195,6 +233,19 @@ async function connect() {
             };
             let ok = false; try { ok = await postOnce(); } catch (e) { console.log('[REPLY POST ERROR 1]', e?.message); }
             if (!ok) { await new Promise(r => setTimeout(r, 500)); try { await postOnce(); } catch (e2) { console.log('[REPLY POST ERROR 2]', e2?.message); } }
+
+            // Publicar na fila local e SSE com metadados, se existirem
+            const meta = metaByMessageId.get(quoted) || {};
+            const event = {
+              type: 'reply',
+              at: new Date().toISOString(),
+              waMessageId: quoted,
+              reactor,
+              text,
+              cpf: meta.cpf || null,
+              solicitacao: meta.solicitacao || null,
+            };
+            publishReply(event);
           }
         } catch (er) {
           console.log('[REPLY HOOK ERROR]', er?.message);
@@ -234,7 +285,7 @@ app.get('/debug/reply-test', async (req, res) => {
 
 // Envio: retorna messageId para o painel salvar
 app.post('/send', async (req, res) => {
-  const { jid, numero, mensagem, imagens } = req.body || {};
+  const { jid, numero, mensagem, imagens, cpf, solicitacao } = req.body || {};
   const destino = jid || numero;
   console.log(`[TENTATIVA] ${destino}: ${String(mensagem || '').substring(0, 80)}...`);
 
@@ -301,6 +352,16 @@ app.post('/send', async (req, res) => {
     }
 
     console.log('[SUCESSO] Enviado! messageId:', messageId, 'all:', messageIds);
+    // Guardar metadados (se informados) para correlacionar replies
+    if ((cpf || solicitacao) && Array.isArray(messageIds) && messageIds.length) {
+      for (const mid of messageIds) {
+        if (!mid) continue;
+        metaByMessageId.set(mid, {
+          cpf: cpf || null,
+          solicitacao: solicitacao || null,
+        });
+      }
+    }
     res.json({ ok: true, messageId, messageIds });
   } catch (e) {
     console.log('[FALHA]', e);
