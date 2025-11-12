@@ -244,6 +244,7 @@ async function connect() {
               text,
               cpf: meta.cpf || null,
               solicitacao: meta.solicitacao || null,
+              agente: meta.agente || null,
             };
             publishReply(event);
           }
@@ -285,7 +286,7 @@ app.get('/debug/reply-test', async (req, res) => {
 
 // Envio: retorna messageId para o painel salvar
 app.post('/send', async (req, res) => {
-  const { jid, numero, mensagem, imagens, cpf, solicitacao } = req.body || {};
+  const { jid, numero, mensagem, imagens, cpf, solicitacao, agente } = req.body || {};
   // fallback: extrair meta do texto quando não enviados como campos
   const parseMeta = (txt = '') => {
     try {
@@ -379,10 +380,11 @@ app.post('/send', async (req, res) => {
     // Guardar metadados (se informados) ou extraídos do texto para correlacionar replies
     const metaCpf = cpf || parsed.cpf || null;
     const metaSol = solicitacao || parsed.solicitacao || null;
+    const metaAgent = agente || null;
     if ((metaCpf || metaSol) && Array.isArray(messageIds) && messageIds.length) {
       for (const mid of messageIds) {
         if (!mid) continue;
-        metaByMessageId.set(mid, { cpf: metaCpf, solicitacao: metaSol });
+        metaByMessageId.set(mid, { cpf: metaCpf, solicitacao: metaSol, agente: metaAgent });
       }
     }
     res.json({ ok: true, messageId, messageIds });
