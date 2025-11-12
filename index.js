@@ -35,23 +35,6 @@ function publishReply(ev) {
   } catch {}
 }
 
-async function connect() {
-  if (reconnecting) return;
-  reconnecting = true;
-  isConnected = false;
-
-  const { state, saveCreds } = await useMultiFileAuthState('auth');
-
-  sock = makeWASocket({
-    auth: state,
-    logger: pino({ level: 'silent' }),
-    browser: ['Chrome', 'Ubuntu', '20.04'],
-    keepAliveIntervalMs: 10000,
-    syncFullHistory: true,
-    connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000
-  });
-
 // Endpoint para obter últimas respostas (útil para debug/consumo inicial)
 app.get('/replies/recent', (req, res) => {
   res.json(recentReplies);
@@ -72,6 +55,23 @@ app.get('/stream/replies', (req, res) => {
     try { sseClients.delete(res); } catch {}
   });
 });
+
+async function connect() {
+  if (reconnecting) return;
+  reconnecting = true;
+  isConnected = false;
+
+  const { state, saveCreds } = await useMultiFileAuthState('auth');
+
+  sock = makeWASocket({
+    auth: state,
+    logger: pino({ level: 'silent' }),
+    browser: ['Chrome', 'Ubuntu', '20.04'],
+    keepAliveIntervalMs: 10000,
+    syncFullHistory: true,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000
+  });
 
   // Conexão / QR
   sock.ev.on('connection.update', (update) => {
