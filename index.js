@@ -162,51 +162,39 @@ async function connect() {
 
         // Hook de reply: quando alguém responde (cita) uma mensagem enviada pelo bot
         try {
+          const m = msg?.message || {};
           const text =
             m.conversation ||
             m.extendedTextMessage?.text ||
             m.imageMessage?.caption ||
             m.videoMessage?.caption || '';
-          // Fallbacks para localizar o ID da mensagem citada
           const ctx = m.extendedTextMessage?.contextInfo || {};
           const quoted =
             ctx.stanzaId ||
             ctx?.quotedMessage?.key?.id ||
-            ctx?.stanzaID || // alguns dumps usam esta key
+            ctx?.stanzaID ||
             ctx?.quotedStanzaID ||
             null;
 
-          const reactorJid = msg?.key?.participant || msg?.key?.remoteJid || '';
-          const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
           const panel = process.env.PANEL_URL;
+          const reactor = String(msg?.key?.participant || msg?.key?.remoteJid || '').replace(/\D/g, '');
 
-          if (text && quoted && panel) {
-            // POST com logs detalhados + 1 retry simples
-            const payload = { waMessageId: quoted, reactor: reactorDigits, text };
+          if (panel && text && quoted) {
             const url = `${panel}/api/requests/reply`;
+            const payload = { waMessageId: quoted, reactor, text };
             const postOnce = async () => {
               const r = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
               });
-              const ok = r.ok;
-              const status = r.status;
-              let bodyText = '';
+              const ok = r.ok; let bodyText = ''; let status = r.status;
               try { bodyText = await r.text(); } catch {}
-              console.log('[REPLY POST]', { url, quoted, reactorDigits, textLen: String(text).length, status, ok, bodySample: bodyText?.slice(0, 200) });
+              console.log('[REPLY POST]', { status, ok, quoted, reactor, textLen: String(text).length, sample: bodyText?.slice(0,200) });
               return ok;
             };
-            let sent = false;
-            try { sent = await postOnce(); } catch (e) { console.log('[REPLY POST ERROR 1]', e?.message); }
-            if (!sent) {
-              await new Promise((res) => setTimeout(res, 500));
-              try { await postOnce(); } catch (e2) { console.log('[REPLY POST ERROR 2]', e2?.message); }
-            }
-          } else {
-            if (process.env.LOG_REPLIES === '1') {
-              console.log('[REPLY SKIP]', { hasText: !!text, quoted, panel });
-            }
+            let ok = false; try { ok = await postOnce(); } catch (e) { console.log('[REPLY POST ERROR 1]', e?.message); }
+            if (!ok) { await new Promise(r => setTimeout(r, 500)); try { await postOnce(); } catch (e2) { console.log('[REPLY POST ERROR 2]', e2?.message); } }
           }
         } catch (er) {
           console.log('[REPLY HOOK ERROR]', er?.message);
@@ -228,7 +216,7 @@ app.get('/', (req, res) => {
   res.send(`Velotax WhatsApp API - ONLINE\n\nPOST: ${url}/send\nStatus: ${isConnected ? 'CONECTADO' : 'Desconectado'}`);
 });
 
-// Debug endpoint para testar configuração do painel e validação do hook
+// Debug endpoint para validar configuração do painel e hook de reply
 app.get('/debug/reply-test', async (req, res) => {
   const panel = process.env.PANEL_URL;
   const pingUrl = panel ? `${panel}/api/requests` : null;
