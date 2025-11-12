@@ -167,23 +167,50 @@ async function connect() {
             m.extendedTextMessage?.text ||
             m.imageMessage?.caption ||
             m.videoMessage?.caption || '';
+          // Fallbacks para localizar o ID da mensagem citada
+          const ctx = m.extendedTextMessage?.contextInfo || {};
           const quoted =
-            m.extendedTextMessage?.contextInfo?.stanzaId ||
-            m.extendedTextMessage?.contextInfo?.quotedMessage?.key?.id ||
+            ctx.stanzaId ||
+            ctx?.quotedMessage?.key?.id ||
+            ctx?.stanzaID || // alguns dumps usam esta key
+            ctx?.quotedStanzaID ||
             null;
-          if (text && quoted) {
-            const reactorJid = msg?.key?.participant || msg?.key?.remoteJid || '';
-            const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
-            const panel = process.env.PANEL_URL;
-            if (panel) {
-              await fetch(`${panel}/api/requests/reply`, {
+
+          const reactorJid = msg?.key?.participant || msg?.key?.remoteJid || '';
+          const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
+          const panel = process.env.PANEL_URL;
+
+          if (text && quoted && panel) {
+            // POST com logs detalhados + 1 retry simples
+            const payload = { waMessageId: quoted, reactor: reactorDigits, text };
+            const url = `${panel}/api/requests/reply`;
+            const postOnce = async () => {
+              const r = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ waMessageId: quoted, reactor: reactorDigits, text })
-              }).catch(() => {});
+                body: JSON.stringify(payload)
+              });
+              const ok = r.ok;
+              const status = r.status;
+              let bodyText = '';
+              try { bodyText = await r.text(); } catch {}
+              console.log('[REPLY POST]', { url, quoted, reactorDigits, textLen: String(text).length, status, ok, bodySample: bodyText?.slice(0, 200) });
+              return ok;
+            };
+            let sent = false;
+            try { sent = await postOnce(); } catch (e) { console.log('[REPLY POST ERROR 1]', e?.message); }
+            if (!sent) {
+              await new Promise((res) => setTimeout(res, 500));
+              try { await postOnce(); } catch (e2) { console.log('[REPLY POST ERROR 2]', e2?.message); }
+            }
+          } else {
+            if (process.env.LOG_REPLIES === '1') {
+              console.log('[REPLY SKIP]', { hasText: !!text, quoted, panel });
             }
           }
-        } catch {}
+        } catch (er) {
+          console.log('[REPLY HOOK ERROR]', er?.message);
+        }
       }
     } catch (e) {
       console.log('[REACTION UPSERT ERROR]', e.message);
@@ -199,6 +226,22 @@ connect();
 app.get('/', (req, res) => {
   const url = process.env.RENDER_EXTERNAL_URL || `https://${req.headers.host}`;
   res.send(`Velotax WhatsApp API - ONLINE\n\nPOST: ${url}/send\nStatus: ${isConnected ? 'CONECTADO' : 'Desconectado'}`);
+});
+
+// Debug endpoint para testar configuração do painel e validação do hook
+app.get('/debug/reply-test', async (req, res) => {
+  const panel = process.env.PANEL_URL;
+  const pingUrl = panel ? `${panel}/api/requests` : null;
+  const info = { panel, pingUrl, isConnected };
+  try {
+    if (pingUrl) {
+      const r = await fetch(pingUrl, { method: 'GET' });
+      info.requestsOk = r.ok; info.requestsStatus = r.status;
+    }
+  } catch (e) {
+    info.requestsError = e?.message;
+  }
+  res.json(info);
 });
 
 // Envio: retorna messageId para o painel salvar
@@ -297,3 +340,70 @@ app.get('/grupos', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('API escutando porta', PORT));
+
+// Relatório por email (SendGrid) - semanal e geral, disparado por endpoint
+app.post('/report/email', async (req, res) => {
+  try {
+    const panel = process.env.PANEL_URL;
+    const key = process.env.SENDGRID_API_KEY; // SG.xxxxx
+    const to = process.env.REPORT_TO; // emails separados por vírgula
+    const from = process.env.REPORT_FROM || 'no-reply@velotax.local';
+    if (!panel) return res.status(400).json({ ok: false, error: 'PANEL_URL ausente' });
+    if (!key || !to) return res.status(400).json({ ok: false, error: 'SENDGRID_API_KEY ou REPORT_TO ausente' });
+
+    const r = await fetch(`${panel}/api/requests`);
+    if (!r.ok) return res.status(502).json({ ok: false, error: 'Falha ao buscar requests do painel' });
+    const list = await r.json();
+    const arr = Array.isArray(list) ? list : [];
+
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7*24*60*60*1000);
+    const inWeek = arr.filter((x) => new Date(x?.createdAt||0) >= weekAgo);
+
+    const count = (xs, fn) => xs.reduce((m, x) => (m[fn(x)] = (m[fn(x)]||0)+1, m), {});
+    const byStatusWeek = count(inWeek, x => String(x?.status||'').toLowerCase()||'—');
+    const byStatusAll = count(arr, x => String(x?.status||'').toLowerCase()||'—');
+    const byAgentWeek = count(inWeek, x => String(x?.agente||'')||'—');
+    const byAgentAll = count(arr, x => String(x?.agente||'')||'—');
+    const perDayWeek = count(inWeek, x => new Date(x?.createdAt||0).toISOString().slice(0,10));
+
+    const fmt = (obj) => Object.entries(obj).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k}: ${v}`).join('<br>');
+    const html = `
+      <h2>Relatório de Uso do Painel</h2>
+      <h3>Últimos 7 dias</h3>
+      Total: ${inWeek.length}<br>
+      Por dia:<br>${fmt(perDayWeek)}<br><br>
+      Por status:<br>${fmt(byStatusWeek)}<br><br>
+      Por agente:<br>${fmt(byAgentWeek)}<br><br>
+      <h3>Geral</h3>
+      Total: ${arr.length}<br>
+      Por status:<br>${fmt(byStatusAll)}<br><br>
+      Por agente:<br>${fmt(byAgentAll)}<br><br>
+      <small>Gerado em ${now.toLocaleString('pt-BR')}</small>
+    `;
+
+    const toList = String(to).split(',').map(s=>s.trim()).filter(Boolean);
+    const payload = {
+      personalizations: [{ to: toList.map(e=>({ email: e })) }],
+      from: { email: from, name: 'Velotax Painel' },
+      subject: 'Relatório de Uso do Painel (Semanal e Geral)',
+      content: [{ type: 'text/html', value: html }]
+    };
+    const sgRes = await fetch('https://api.sendgrid.com/v3/mail/send', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+    const ok = sgRes.status === 202;
+    let sgText = '';
+    try { sgText = await sgRes.text(); } catch {}
+    console.log('[REPORT EMAIL]', { status: sgRes.status, ok, sample: sgText?.slice(0,200) });
+    if (!ok) return res.status(502).json({ ok: false, status: sgRes.status, body: sgText });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
