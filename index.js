@@ -286,6 +286,30 @@ app.get('/debug/reply-test', async (req, res) => {
 // Envio: retorna messageId para o painel salvar
 app.post('/send', async (req, res) => {
   const { jid, numero, mensagem, imagens, cpf, solicitacao } = req.body || {};
+  // fallback: extrair meta do texto quando não enviados como campos
+  const parseMeta = (txt = '') => {
+    try {
+      const s = String(txt || '');
+      let cpfTxt = null;
+      // procurar linha que começa com CPF:
+      const mCpf = s.match(/^\s*CPF\s*:\s*(.+)$/im);
+      if (mCpf && mCpf[1]) {
+        const dig = String(mCpf[1]).replace(/\D/g, '');
+        if (dig) cpfTxt = dig;
+      }
+      let sol = null;
+      // tentar padrão do título: *Nova Solicitação Técnica - X*
+      const mSol1 = s.match(/\*Nova\s+Solicitação\s+Técnica\s*-\s*([^*]+)\*/i);
+      if (mSol1 && mSol1[1]) sol = mSol1[1].trim();
+      // fallback: procurar linha que começa com Tipo de Solicitação:
+      if (!sol) {
+        const mSol2 = s.match(/^\s*Tipo\s+de\s+Solicitação\s*:\s*(.+)$/im);
+        if (mSol2 && mSol2[1]) sol = mSol2[1].trim();
+      }
+      return { cpf: cpfTxt, solicitacao: sol };
+    } catch { return { cpf: null, solicitacao: null }; }
+  };
+  const parsed = (!cpf || !solicitacao) ? parseMeta(mensagem) : { cpf: null, solicitacao: null };
   const destino = jid || numero;
   console.log(`[TENTATIVA] ${destino}: ${String(mensagem || '').substring(0, 80)}...`);
 
@@ -352,14 +376,13 @@ app.post('/send', async (req, res) => {
     }
 
     console.log('[SUCESSO] Enviado! messageId:', messageId, 'all:', messageIds);
-    // Guardar metadados (se informados) para correlacionar replies
-    if ((cpf || solicitacao) && Array.isArray(messageIds) && messageIds.length) {
+    // Guardar metadados (se informados) ou extraídos do texto para correlacionar replies
+    const metaCpf = cpf || parsed.cpf || null;
+    const metaSol = solicitacao || parsed.solicitacao || null;
+    if ((metaCpf || metaSol) && Array.isArray(messageIds) && messageIds.length) {
       for (const mid of messageIds) {
         if (!mid) continue;
-        metaByMessageId.set(mid, {
-          cpf: cpf || null,
-          solicitacao: solicitacao || null,
-        });
+        metaByMessageId.set(mid, { cpf: metaCpf, solicitacao: metaSol });
       }
     }
     res.json({ ok: true, messageId, messageIds });
