@@ -52,11 +52,16 @@ app.get('/stream/replies', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
   const agent = (req.query?.agent ? String(req.query.agent) : null) || null;
+  if (!agent) {
+    try { res.write(`event: init\n` + `data: []\n\n`); } catch {}
+    return res.end();
+  }
   const client = { res, agent };
   sseClients.add(client);
   // enviar estado inicial
   try {
-    res.write(`event: init\n` + `data: ${JSON.stringify(recentReplies)}\n\n`);
+    const initial = recentReplies.filter(ev => norm(ev?.agente||'') === norm(agent));
+    res.write(`event: init\n` + `data: ${JSON.stringify(initial)}\n\n`);
   } catch {}
   req.on('close', () => {
     try { sseClients.delete(client); } catch {}
