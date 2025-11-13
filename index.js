@@ -22,15 +22,20 @@ let reconnecting = false;
 const metaByMessageId = new Map(); // messageId -> { cpf, solicitacao }
 const recentReplies = []; // ring buffer simples
 const recentMax = 200;
-const sseClients = new Set(); // Set<res>
+const sseClients = new Set(); // Set<{ res, agent: string|null }>
+
+const norm = (s = '') => String(s).toLowerCase().trim().replace(/\s+/g, ' ');
 
 function publishReply(ev) {
   try {
     recentReplies.push(ev);
     if (recentReplies.length > recentMax) recentReplies.shift();
     const data = `event: reply\n` + `data: ${JSON.stringify(ev)}\n\n`;
-    for (const res of sseClients) {
-      try { res.write(data); } catch {}
+    for (const client of sseClients) {
+      try {
+        const want = client?.agent ? (norm(client.agent) === norm(ev?.agente || '')) : true;
+        if (want) client.res.write(data);
+      } catch {}
     }
   } catch {}
 }
@@ -46,13 +51,15 @@ app.get('/stream/replies', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
-  sseClients.add(res);
+  const agent = (req.query?.agent ? String(req.query.agent) : null) || null;
+  const client = { res, agent };
+  sseClients.add(client);
   // enviar estado inicial
   try {
     res.write(`event: init\n` + `data: ${JSON.stringify(recentReplies)}\n\n`);
   } catch {}
   req.on('close', () => {
-    try { sseClients.delete(res); } catch {}
+    try { sseClients.delete(client); } catch {}
   });
 });
 
