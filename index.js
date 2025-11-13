@@ -221,8 +221,19 @@ async function connect() {
             ctx?.quotedStanzaID ||
             null;
 
+          const enabled = String(process.env.REPLIES_STREAM_ENABLED || '0') === '1';
           const panel = process.env.PANEL_URL;
           const reactor = String(msg?.key?.participant || msg?.key?.remoteJid || '').replace(/\D/g, '');
+
+          // Só processa se feature estiver habilitada e se o quoted pertencer a um messageId conhecido (enviado via /send)
+          const knownMeta = quoted ? metaByMessageId.get(quoted) : null;
+          if (!enabled || !quoted || !knownMeta) {
+            // opcional: log leve para diagnóstico
+            if (!enabled) console.log('[REPLY IGNORED] stream desabilitado');
+            else if (!quoted) console.log('[REPLY IGNORED] sem quoted messageId');
+            else console.log('[REPLY IGNORED] quoted desconhecido (não enviado pelo bot)');
+            return;
+          }
 
           if (panel && text && quoted) {
             const url = `${panel}/api/requests/reply`;
@@ -241,8 +252,8 @@ async function connect() {
             let ok = false; try { ok = await postOnce(); } catch (e) { console.log('[REPLY POST ERROR 1]', e?.message); }
             if (!ok) { await new Promise(r => setTimeout(r, 500)); try { await postOnce(); } catch (e2) { console.log('[REPLY POST ERROR 2]', e2?.message); } }
 
-            // Publicar na fila local e SSE com metadados, se existirem
-            const meta = metaByMessageId.get(quoted) || {};
+            // Publicar na fila local e SSE somente com metadados conhecidos
+            const meta = knownMeta || {};
             const event = {
               type: 'reply',
               at: new Date().toISOString(),
