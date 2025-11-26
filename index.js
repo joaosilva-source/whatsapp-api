@@ -391,6 +391,33 @@ app.post('/send', async (req, res) => {
       }
     }
 
+    // Se houver vídeos, enviar com legenda
+    const vids = Array.isArray(videos) ? videos : [];
+    if (vids.length > 0) {
+      try {
+        for (const video of vids) {
+          try {
+            const buf = Buffer.from(String(video?.data || ''), 'base64');
+            const sentVideo = await sock.sendMessage(destinatario, {
+              video: buf,
+              mimetype: video?.type || 'video/mp4',
+              caption: imgs.length === 0 ? (mensagem || '') : '' // Legenda só se não houver imagens
+            });
+            const videoId = sentVideo?.key?.id || null;
+            if (videoId) {
+              messageId = messageId || videoId; // Usa primeiro vídeo como messageId principal se não houver imagens
+              messageIds.push(videoId);
+            }
+            console.log('[VIDEO] Enviado com sucesso:', videoId);
+          } catch (vidErr) {
+            console.log('[WARN] Falha ao enviar vídeo', vidErr?.message, video?.name);
+          }
+        }
+      } catch (vidErr) {
+        console.log('[WARN] Falha geral no envio de vídeos', vidErr?.message);
+      }
+    }
+
     // Se não houve imagem enviada (ou falhou), enviar texto
     if (!messageId) {
       const sent = await sock.sendMessage(destinatario, { text: mensagem || '' });
