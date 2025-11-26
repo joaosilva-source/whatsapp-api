@@ -18,6 +18,56 @@ let sock = null;
 let isConnected = false;
 let reconnecting = false;
 
+// Meta e stream de respostas em memória (não persistente)
+const metaByMessageId = new Map(); // messageId -> { cpf, solicitacao }
+const recentReplies = []; // ring buffer simples
+const recentMax = 200;
+const sseClients = new Set(); // Set<{ res, agent: string|null }>
+
+const norm = (s = '') => String(s).toLowerCase().trim().replace(/\s+/g, ' ');
+
+function publishReply(ev) {
+  try {
+    recentReplies.push(ev);
+    if (recentReplies.length > recentMax) recentReplies.shift();
+    const data = `event: reply\n` + `data: ${JSON.stringify(ev)}\n\n`;
+    for (const client of sseClients) {
+      try {
+        const want = client?.agent ? (norm(client.agent) === norm(ev?.agente || '')) : true;
+        if (want) client.res.write(data);
+      } catch {}
+    }
+  } catch {}
+}
+
+// Endpoint para obter últimas respostas (útil para debug/consumo inicial)
+app.get('/replies/recent', (req, res) => {
+  res.json(recentReplies);
+});
+
+// SSE: stream de replies em tempo real
+app.get('/stream/replies', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  const agent = (req.query?.agent ? String(req.query.agent) : null) || null;
+  if (!agent) {
+    try { res.write(`event: init\n` + `data: []\n\n`); } catch {}
+    return res.end();
+  }
+  const client = { res, agent };
+  sseClients.add(client);
+  // enviar estado inicial
+  try {
+    const initial = recentReplies.filter(ev => norm(ev?.agente||'') === norm(agent));
+    res.write(`event: init\n` + `data: ${JSON.stringify(initial)}\n\n`);
+  } catch {}
+  req.on('close', () => {
+    try { sseClients.delete(client); } catch {}
+  });
+});
+
 async function connect() {
   if (reconnecting) return;
   reconnecting = true;
@@ -162,28 +212,68 @@ async function connect() {
 
         // Hook de reply: quando alguém responde (cita) uma mensagem enviada pelo bot
         try {
+          const m = msg?.message || {};
           const text =
             m.conversation ||
             m.extendedTextMessage?.text ||
             m.imageMessage?.caption ||
             m.videoMessage?.caption || '';
+          const ctx = m.extendedTextMessage?.contextInfo || {};
           const quoted =
-            m.extendedTextMessage?.contextInfo?.stanzaId ||
-            m.extendedTextMessage?.contextInfo?.quotedMessage?.key?.id ||
+            ctx.stanzaId ||
+            ctx?.quotedMessage?.key?.id ||
+            ctx?.stanzaID ||
+            ctx?.quotedStanzaID ||
             null;
-          if (text && quoted) {
-            const reactorJid = msg?.key?.participant || msg?.key?.remoteJid || '';
-            const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
-            const panel = process.env.PANEL_URL;
-            if (panel) {
-              await fetch(`${panel}/api/requests/reply`, {
+
+          const enabled = String(process.env.REPLIES_STREAM_ENABLED || '0') === '1';
+          const panel = process.env.PANEL_URL;
+          const reactor = String(msg?.key?.participant || msg?.key?.remoteJid || '').replace(/\D/g, '');
+
+          // Só processa se feature estiver habilitada e se o quoted pertencer a um messageId conhecido (enviado via /send)
+          const knownMeta = quoted ? metaByMessageId.get(quoted) : null;
+          if (!enabled || !quoted || !knownMeta) {
+            // opcional: log leve para diagnóstico
+            if (!enabled) console.log('[REPLY IGNORED] stream desabilitado');
+            else if (!quoted) console.log('[REPLY IGNORED] sem quoted messageId');
+            else console.log('[REPLY IGNORED] quoted desconhecido (não enviado pelo bot)');
+            return;
+          }
+
+          if (panel && text && quoted) {
+            const url = `${panel}/api/requests/reply`;
+            const payload = { waMessageId: quoted, reactor, text };
+            const postOnce = async () => {
+              const r = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ waMessageId: quoted, reactor: reactorDigits, text })
-              }).catch(() => {});
-            }
+                body: JSON.stringify(payload)
+              });
+              const ok = r.ok; let bodyText = ''; let status = r.status;
+              try { bodyText = await r.text(); } catch {}
+              console.log('[REPLY POST]', { status, ok, quoted, reactor, textLen: String(text).length, sample: bodyText?.slice(0,200) });
+              return ok;
+            };
+            let ok = false; try { ok = await postOnce(); } catch (e) { console.log('[REPLY POST ERROR 1]', e?.message); }
+            if (!ok) { await new Promise(r => setTimeout(r, 500)); try { await postOnce(); } catch (e2) { console.log('[REPLY POST ERROR 2]', e2?.message); } }
+
+            // Publicar na fila local e SSE somente com metadados conhecidos
+            const meta = knownMeta || {};
+            const event = {
+              type: 'reply',
+              at: new Date().toISOString(),
+              waMessageId: quoted,
+              reactor,
+              text,
+              cpf: meta.cpf || null,
+              solicitacao: meta.solicitacao || null,
+              agente: meta.agente || null,
+            };
+            publishReply(event);
           }
-        } catch {}
+        } catch (er) {
+          console.log('[REPLY HOOK ERROR]', er?.message);
+        }
       }
     } catch (e) {
       console.log('[REACTION UPSERT ERROR]', e.message);
@@ -201,9 +291,49 @@ app.get('/', (req, res) => {
   res.send(`Velotax WhatsApp API - ONLINE\n\nPOST: ${url}/send\nStatus: ${isConnected ? 'CONECTADO' : 'Desconectado'}`);
 });
 
+// Debug endpoint para validar configuração do painel e hook de reply
+app.get('/debug/reply-test', async (req, res) => {
+  const panel = process.env.PANEL_URL;
+  const pingUrl = panel ? `${panel}/api/requests` : null;
+  const info = { panel, pingUrl, isConnected };
+  try {
+    if (pingUrl) {
+      const r = await fetch(pingUrl, { method: 'GET' });
+      info.requestsOk = r.ok; info.requestsStatus = r.status;
+    }
+  } catch (e) {
+    info.requestsError = e?.message;
+  }
+  res.json(info);
+});
+
 // Envio: retorna messageId para o painel salvar
 app.post('/send', async (req, res) => {
-  const { jid, numero, mensagem, imagens } = req.body || {};
+  const { jid, numero, mensagem, imagens, cpf, solicitacao, agente } = req.body || {};
+  // fallback: extrair meta do texto quando não enviados como campos
+  const parseMeta = (txt = '') => {
+    try {
+      const s = String(txt || '');
+      let cpfTxt = null;
+      // procurar linha que começa com CPF:
+      const mCpf = s.match(/^\s*CPF\s*:\s*(.+)$/im);
+      if (mCpf && mCpf[1]) {
+        const dig = String(mCpf[1]).replace(/\D/g, '');
+        if (dig) cpfTxt = dig;
+      }
+      let sol = null;
+      // tentar padrão do título: *Nova Solicitação Técnica - X*
+      const mSol1 = s.match(/\*Nova\s+Solicitação\s+Técnica\s*-\s*([^*]+)\*/i);
+      if (mSol1 && mSol1[1]) sol = mSol1[1].trim();
+      // fallback: procurar linha que começa com Tipo de Solicitação:
+      if (!sol) {
+        const mSol2 = s.match(/^\s*Tipo\s+de\s+Solicitação\s*:\s*(.+)$/im);
+        if (mSol2 && mSol2[1]) sol = mSol2[1].trim();
+      }
+      return { cpf: cpfTxt, solicitacao: sol };
+    } catch { return { cpf: null, solicitacao: null }; }
+  };
+  const parsed = (!cpf || !solicitacao) ? parseMeta(mensagem) : { cpf: null, solicitacao: null };
   const destino = jid || numero;
   console.log(`[TENTATIVA] ${destino}: ${String(mensagem || '').substring(0, 80)}...`);
 
@@ -270,6 +400,16 @@ app.post('/send', async (req, res) => {
     }
 
     console.log('[SUCESSO] Enviado! messageId:', messageId, 'all:', messageIds);
+    // Guardar metadados (se informados) ou extraídos do texto para correlacionar replies
+    const metaCpf = cpf || parsed.cpf || null;
+    const metaSol = solicitacao || parsed.solicitacao || null;
+    const metaAgent = agente || null;
+    if ((metaCpf || metaSol) && Array.isArray(messageIds) && messageIds.length) {
+      for (const mid of messageIds) {
+        if (!mid) continue;
+        metaByMessageId.set(mid, { cpf: metaCpf, solicitacao: metaSol, agente: metaAgent });
+      }
+    }
     res.json({ ok: true, messageId, messageIds });
   } catch (e) {
     console.log('[FALHA]', e);
@@ -297,3 +437,70 @@ app.get('/grupos', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('API escutando porta', PORT));
+
+// Relatório por email (SendGrid) - semanal e geral, disparado por endpoint
+app.post('/report/email', async (req, res) => {
+  try {
+    const panel = process.env.PANEL_URL;
+    const key = process.env.SENDGRID_API_KEY; // SG.xxxxx
+    const to = process.env.REPORT_TO; // emails separados por vírgula
+    const from = process.env.REPORT_FROM || 'no-reply@velotax.local';
+    if (!panel) return res.status(400).json({ ok: false, error: 'PANEL_URL ausente' });
+    if (!key || !to) return res.status(400).json({ ok: false, error: 'SENDGRID_API_KEY ou REPORT_TO ausente' });
+
+    const r = await fetch(`${panel}/api/requests`);
+    if (!r.ok) return res.status(502).json({ ok: false, error: 'Falha ao buscar requests do painel' });
+    const list = await r.json();
+    const arr = Array.isArray(list) ? list : [];
+
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7*24*60*60*1000);
+    const inWeek = arr.filter((x) => new Date(x?.createdAt||0) >= weekAgo);
+
+    const count = (xs, fn) => xs.reduce((m, x) => (m[fn(x)] = (m[fn(x)]||0)+1, m), {});
+    const byStatusWeek = count(inWeek, x => String(x?.status||'').toLowerCase()||'—');
+    const byStatusAll = count(arr, x => String(x?.status||'').toLowerCase()||'—');
+    const byAgentWeek = count(inWeek, x => String(x?.agente||'')||'—');
+    const byAgentAll = count(arr, x => String(x?.agente||'')||'—');
+    const perDayWeek = count(inWeek, x => new Date(x?.createdAt||0).toISOString().slice(0,10));
+
+    const fmt = (obj) => Object.entries(obj).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k}: ${v}`).join('<br>');
+    const html = `
+      <h2>Relatório de Uso do Painel</h2>
+      <h3>Últimos 7 dias</h3>
+      Total: ${inWeek.length}<br>
+      Por dia:<br>${fmt(perDayWeek)}<br><br>
+      Por status:<br>${fmt(byStatusWeek)}<br><br>
+      Por agente:<br>${fmt(byAgentWeek)}<br><br>
+      <h3>Geral</h3>
+      Total: ${arr.length}<br>
+      Por status:<br>${fmt(byStatusAll)}<br><br>
+      Por agente:<br>${fmt(byAgentAll)}<br><br>
+      <small>Gerado em ${now.toLocaleString('pt-BR')}</small>
+    `;
+
+    const toList = String(to).split(',').map(s=>s.trim()).filter(Boolean);
+    const payload = {
+      personalizations: [{ to: toList.map(e=>({ email: e })) }],
+      from: { email: from, name: 'Velotax Painel' },
+      subject: 'Relatório de Uso do Painel (Semanal e Geral)',
+      content: [{ type: 'text/html', value: html }]
+    };
+    const sgRes = await fetch('https://api.sendgrid.com/v3/mail/send', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+    const ok = sgRes.status === 202;
+    let sgText = '';
+    try { sgText = await sgRes.text(); } catch {}
+    console.log('[REPORT EMAIL]', { status: sgRes.status, ok, sample: sgText?.slice(0,200) });
+    if (!ok) return res.status(502).json({ ok: false, status: sgRes.status, body: sgText });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
