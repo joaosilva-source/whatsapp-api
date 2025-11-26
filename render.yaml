@@ -1,7 +1,7 @@
 services:
   - type: web
     name: whatsapp-api
-    runtime: node
+    runtime: node-20
     plan: free
     buildCommand: npm install
     startCommand: node index.js
