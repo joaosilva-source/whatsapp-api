@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: whatsapp-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+    healthCheckPath: /status
+    autoDeploy: true
+    disk:
+      name: auth-storage
+      mountPath: /app/auth
+      sizeGB: 1
