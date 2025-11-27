@@ -309,7 +309,7 @@ app.get('/debug/reply-test', async (req, res) => {
 
 // Envio: retorna messageId para o painel salvar
 app.post('/send', async (req, res) => {
-  const { jid, numero, mensagem, imagens, cpf, solicitacao, agente } = req.body || {};
+  const { jid, numero, mensagem, imagens, videos, cpf, solicitacao, agente } = req.body || {};
   // fallback: extrair meta do texto quando não enviados como campos
   const parseMeta = (txt = '') => {
     try {
