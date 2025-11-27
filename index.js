@@ -418,12 +418,17 @@ app.post('/send', async (req, res) => {
       }
     }
 
-    // Se não houve imagem enviada (ou falhou), enviar texto
+    // Se não houve imagem ou vídeo enviada (ou falhou), enviar texto
     if (!messageId) {
-      const sent = await sock.sendMessage(destinatario, { text: mensagem || '' });
-      const tid = sent?.key?.id || null;
-      messageId = tid;
-      if (tid) messageIds.push(tid);
+      try {
+        const sent = await sock.sendMessage(destinatario, { text: mensagem || '' });
+        const tid = sent?.key?.id || null;
+        messageId = tid;
+        if (tid) messageIds.push(tid);
+      } catch (textErr) {
+        console.log('[ERROR] Falha ao enviar texto', textErr?.message);
+        throw textErr;
+      }
     }
 
     console.log('[SUCESSO] Enviado! messageId:', messageId, 'all:', messageIds);
