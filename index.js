@@ -1,4 +1,5 @@
 // index.js - Backend Render (Express + Baileys)
+
 // Node >= 18 (fetch nativo)
 
 const express = require('express');
@@ -67,6 +68,61 @@ app.get('/stream/replies', (req, res) => {
     try { sseClients.delete(client); } catch {}
   });
 });
+
+/**
+ * Função para atualizar status via reação do WhatsApp
+ * Chama o backend do VeloHub
+ */
+async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
+  const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8090';
+  const AUTO_STATUS_ENDPOINT = `${BACKEND_URL}/api/escalacoes/solicitacoes/auto-status`;
+
+  try {
+    const body = {
+      waMessageId: waMessageId,
+      reaction: reaction, // '✅' ou '❌'
+      reactor: reactorDigits
+    };
+
+    console.log('[AUTO-STATUS] Fazendo requisição HTTP...');
+    console.log('[AUTO-STATUS] URL:', AUTO_STATUS_ENDPOINT);
+    console.log('[AUTO-STATUS] Body:', JSON.stringify(body));
+
+    const response = await fetch(AUTO_STATUS_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    console.log('[AUTO-STATUS] Status HTTP:', response.status);
+    console.log('[AUTO-STATUS] Status Text:', response.statusText);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[AUTO-STATUS] ❌ Erro HTTP:', response.status, errorText);
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const result = await response.json();
+    console.log('[AUTO-STATUS] ✅ Resposta do backend:', JSON.stringify(result, null, 2));
+
+    if (result.success) {
+      console.log('[AUTO-STATUS] ✅ Status atualizado com sucesso!');
+      console.log('[AUTO-STATUS] Novo status:', result.data?.status);
+    } else {
+      console.error('[AUTO-STATUS] ❌ Erro na resposta:', result.error);
+    }
+
+    return result;
+  } catch (error) {
+    console.error('[AUTO-STATUS] ❌ Erro ao fazer requisição:', error.message);
+    console.error('[AUTO-STATUS] Stack:', error.stack);
+    // Não relançar o erro para não quebrar o fluxo do renderer
+    return null;
+  }
+}
 
 async function connect() {
   if (reconnecting) return;
@@ -150,17 +206,12 @@ async function connect() {
           allowed,
         });
 
-        // Temporariamente sem checagem de autorizado para validar fluxo end-to-end
-        if (emoji === '✅') {
-          const panel = process.env.PANEL_URL; // ex.: https://velotax-painel.vercel.app
+        // Processar reações ✅ e ❌
+        if (emoji === '✅' || emoji === '❌') {
           const waMessageId = key?.id;
-          if (panel && waMessageId) {
-            console.log('[AUTO-STATUS/UPDATE] Marcando FEITO via reação ✅', { waMessageId, reactorDigits });
-            await fetch(`${panel}/api/requests/auto-status`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ waMessageId, reactor: reactorDigits, status: 'feito' })
-            }).catch(() => {});
+          if (waMessageId) {
+            console.log('[AUTO-STATUS/UPDATE] Marcando via reação', emoji, { waMessageId, reactorDigits });
+            await atualizarStatusViaReacao(waMessageId, emoji, reactorDigits);
           }
         }
       }
@@ -195,17 +246,12 @@ async function connect() {
             allowed,
           });
 
-          // Temporariamente sem checagem de autorizado para validar fluxo end-to-end
-          if (emoji === '✅') {
-            const panel = process.env.PANEL_URL; // ex.: https://velotax-painel.vercel.app
+          // Processar reações ✅ e ❌
+          if (emoji === '✅' || emoji === '❌') {
             const waMessageId = key?.id;
-            if (panel && waMessageId) {
-              console.log('[AUTO-STATUS/UPSERT] Marcando FEITO via reação ✅', { waMessageId, reactorDigits });
-              await fetch(`${panel}/api/requests/auto-status`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ waMessageId, reactor: reactorDigits, status: 'feito' })
-              }).catch(() => {});
+            if (waMessageId) {
+              console.log('[AUTO-STATUS/UPSERT] Marcando via reação', emoji, { waMessageId, reactorDigits });
+              await atualizarStatusViaReacao(waMessageId, emoji, reactorDigits);
             }
           }
         }
@@ -536,3 +582,4 @@ app.post('/report/email', async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
