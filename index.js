@@ -71,10 +71,11 @@ app.get('/stream/replies', (req, res) => {
 
 /**
  * Função para atualizar status via reação do WhatsApp
- * Chama o backend do VeloHub
+ * Chama o backend do Inova-Hub
  */
 async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
-  const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8090';
+  // Suporta tanto INOVA_HUB_API_URL quanto BACKEND_URL (compatibilidade)
+  const BACKEND_URL = process.env.INOVA_HUB_API_URL || process.env.BACKEND_URL || 'http://localhost:8090';
   const AUTO_STATUS_ENDPOINT = `${BACKEND_URL}/api/escalacoes/solicitacoes/auto-status`;
 
   try {
