@@ -244,9 +244,7 @@ async function connect() {
 
         const rx = m?.reactionMessage;
         if (!rx) {
-          if (msg && msg.message) {
-            console.log('[REACTION DEBUG][upsert] message keys:', Object.keys(msg.message));
-          }
+          // Não logar mensagens que não são reação (reduz ruído: imageMessage, conversation, etc.)
         } else {
           const emoji = rx.text;
           const key = rx.key; // mensagem reagida (usa id no painel)
@@ -295,10 +293,6 @@ async function connect() {
           // Só processa se feature estiver habilitada e se o quoted pertencer a um messageId conhecido (enviado via /send)
           const knownMeta = quoted ? metaByMessageId.get(quoted) : null;
           if (!enabled || !quoted || !knownMeta) {
-            // opcional: log leve para diagnóstico
-            if (!enabled) console.log('[REPLY IGNORED] stream desabilitado');
-            else if (!quoted) console.log('[REPLY IGNORED] sem quoted messageId');
-            else console.log('[REPLY IGNORED] quoted desconhecido (não enviado pelo bot)');
             return;
           }
 
