@@ -73,14 +73,18 @@ app.get('/stream/replies', (req, res) => {
 
 /**
  * Função para atualizar status via reação do WhatsApp
- * Chama o backend do VeloHub
+ * Prioridade: painel (PANEL_URL) — onde estão as solicitações/requests; fallback: Velohub (BACKEND_URL)
  */
 async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
-  // Prioridade: BACKEND_URL > VELOHUB_BACKEND_URL > fallback para produção
-  const BACKEND_URL = process.env.BACKEND_URL || 
-                      process.env.VELOHUB_BACKEND_URL || 
+  const PANEL_URL = (process.env.PANEL_URL || process.env.PAINEL_URL || '').replace(/\/$/, '');
+  const BACKEND_URL = process.env.BACKEND_URL ||
+                      process.env.VELOHUB_BACKEND_URL ||
                       'https://velohub-278491073220.us-east1.run.app';
-  const AUTO_STATUS_ENDPOINT = `${BACKEND_URL}/api/escalacoes/solicitacoes/auto-status`;
+
+  // Painel: /api/requests/auto-status (Request por waMessageId); Velohub: /api/escalacoes/solicitacoes/auto-status
+  const url = PANEL_URL
+    ? `${PANEL_URL}/api/requests/auto-status`
+    : `${BACKEND_URL}/api/escalacoes/solicitacoes/auto-status`;
 
   try {
     const body = {
@@ -90,10 +94,10 @@ async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
     };
 
     console.log('[AUTO-STATUS] Fazendo requisição HTTP...');
-    console.log('[AUTO-STATUS] URL:', AUTO_STATUS_ENDPOINT);
+    console.log('[AUTO-STATUS] URL:', url);
     console.log('[AUTO-STATUS] Body:', JSON.stringify(body));
 
-    const response = await fetch(AUTO_STATUS_ENDPOINT, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -111,12 +115,13 @@ async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
     }
 
     const result = await response.json();
-    console.log('[AUTO-STATUS] ✅ Resposta do backend:', JSON.stringify(result, null, 2));
+    console.log('[AUTO-STATUS] ✅ Resposta:', JSON.stringify(result, null, 2));
 
-    if (result.success) {
-      console.log('[AUTO-STATUS] ✅ Status atualizado com sucesso!');
-      console.log('[AUTO-STATUS] Novo status:', result.data?.status);
-    } else {
+    // Painel retorna o Request atualizado; Velohub pode retornar { success, data }
+    const status = result.status ?? result.data?.status;
+    if (response.ok && (result.id != null || result.success)) {
+      console.log('[AUTO-STATUS] ✅ Status atualizado com sucesso! Novo status:', status);
+    } else if (result.error) {
       console.error('[AUTO-STATUS] ❌ Erro na resposta:', result.error);
     }
 
