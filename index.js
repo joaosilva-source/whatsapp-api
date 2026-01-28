@@ -119,8 +119,10 @@ async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
 
     // Painel retorna o Request atualizado; Velohub pode retornar { success, data }
     const status = result.status ?? result.data?.status;
-    if (response.ok && (result.id != null || result.success)) {
+    if (response.ok && (result.id != null || result.success === true)) {
       console.log('[AUTO-STATUS] ✅ Status atualizado com sucesso! Novo status:', status);
+    } else if (result.error === 'request não encontrado' || result.error === 'Solicitação não encontrada') {
+      console.log('[AUTO-STATUS] Mensagem não encontrada no painel (pode ter sido enviada por outro canal)');
     } else if (result.error) {
       console.error('[AUTO-STATUS] ❌ Erro na resposta:', result.error);
     }
