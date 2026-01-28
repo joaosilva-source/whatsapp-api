@@ -1,4 +1,6 @@
 // index.js - Backend Render (Express + Baileys)
+// VERSION: v1.1.1 | DATE: 2025-01-28 | AUTHOR: VeloHub Development Team
+// CHANGELOG: v1.1.1 - Ignorar protocolMessage no upsert para reduzir log; v1.1.0 - Ping automático
 
 // Node >= 18 (fetch nativo)
 
@@ -71,11 +73,13 @@ app.get('/stream/replies', (req, res) => {
 
 /**
  * Função para atualizar status via reação do WhatsApp
- * Chama o backend do Inova-Hub
+ * Chama o backend do VeloHub
  */
 async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
-  // Suporta tanto INOVA_HUB_API_URL quanto BACKEND_URL (compatibilidade)
-  const BACKEND_URL = process.env.INOVA_HUB_API_URL || process.env.BACKEND_URL || 'http://localhost:8090';
+  // Prioridade: BACKEND_URL > VELOHUB_BACKEND_URL > fallback para produção
+  const BACKEND_URL = process.env.BACKEND_URL || 
+                      process.env.VELOHUB_BACKEND_URL || 
+                      'https://velohub-278491073220.us-east1.run.app';
   const AUTO_STATUS_ENDPOINT = `${BACKEND_URL}/api/escalacoes/solicitacoes/auto-status`;
 
   try {
@@ -227,6 +231,10 @@ async function connect() {
       if (!messages || !messages.length) return;
       for (const msg of messages) {
         const m = msg?.message || {};
+        // Ignorar protocolMessage (sincronização WhatsApp) para evitar log em excesso e REPLY IGNORED
+        const keys = msg?.message ? Object.keys(msg.message) : [];
+        if (keys.length === 1 && m?.protocolMessage) continue;
+
         const rx = m?.reactionMessage;
         if (!rx) {
           if (msg && msg.message) {
@@ -336,6 +344,66 @@ connect();
 app.get('/', (req, res) => {
   const url = process.env.RENDER_EXTERNAL_URL || `https://${req.headers.host}`;
   res.send(`Velotax WhatsApp API - ONLINE\n\nPOST: ${url}/send\nStatus: ${isConnected ? 'CONECTADO' : 'Desconectado'}`);
+});
+
+// ============================================
+// ENDPOINTS DE HEALTH CHECK E PING
+// Versão: v1.0.0 | Data: 2025-01-31
+// Objetivo: Manter API ativa e evitar sleep mode
+// ============================================
+
+/**
+ * Endpoint simples de ping/health check
+ * Retorna status básico da API
+ */
+app.get('/ping', (req, res) => {
+  try {
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: Math.floor(process.uptime()),
+      whatsapp: isConnected ? 'connected' : 'disconnected',
+      message: 'API está ativa e funcionando'
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Endpoint completo de health check
+ * Retorna informações detalhadas do sistema
+ */
+app.get('/health', async (req, res) => {
+  try {
+    const health = {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: Math.floor(process.uptime()),
+      memory: {
+        used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB',
+        total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB',
+        rss: Math.round(process.memoryUsage().rss / 1024 / 1024) + ' MB'
+      },
+      whatsapp: isConnected ? 'connected' : 'disconnected',
+      nodeVersion: process.version,
+      platform: process.platform,
+      pingEnabled: process.env.PING_ENABLED !== 'false',
+      pingInterval: process.env.PING_INTERVAL || '600000'
+    };
+    
+    res.json(health);
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      error: error.message
+    });
+  }
 });
 
 // Debug endpoint para validar configuração do painel e hook de reply
@@ -516,6 +584,135 @@ app.get('/grupos', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('API escutando porta', PORT));
+
+// ============================================
+// SISTEMA DE PING AUTOMÁTICO
+// Versão: v1.0.0 | Data: 2025-01-31
+// Objetivo: Manter servidor ativo para evitar sleep mode no Render.com
+// ============================================
+
+/**
+ * Função para fazer ping interno na própria API
+ * Mantém o servidor ativo evitando sleep mode
+ */
+const fazerPingInterno = async () => {
+  try {
+    // Obter URL base (Render.com fornece RENDER_EXTERNAL_URL automaticamente)
+    const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+    const pingUrl = `${baseUrl}/ping`;
+    
+    // Fazer requisição HTTP para o próprio servidor
+    const response = await fetch(pingUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Baileys-API-Ping-System/1.0.0'
+      },
+      // Timeout de 10 segundos
+      signal: AbortSignal.timeout(10000)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // Log de sucesso
+    console.log(`[PING] ${new Date().toISOString()} - Status: ${data.status} | Uptime: ${data.uptime}s`);
+    
+    return { success: true, data };
+  } catch (error) {
+    // Log de erro (não interrompe o processo)
+    console.error(`[PING ERROR] ${new Date().toISOString()} - ${error.message}`);
+    
+    // Se for erro de conexão local, pode ser que o servidor ainda esteja iniciando
+    if (error.message.includes('ECONNREFUSED') || error.message.includes('fetch failed')) {
+      console.warn(`[PING WARNING] Servidor pode estar iniciando. Tentando novamente no próximo ciclo.`);
+    }
+    
+    return { success: false, error: error.message };
+  }
+};
+
+// Configurações via variáveis de ambiente
+const PING_ENABLED = process.env.PING_ENABLED !== 'false'; // Default: true
+const PING_INTERVAL = parseInt(process.env.PING_INTERVAL || '600000', 10); // Default: 10 minutos (600000ms)
+const PING_DELAY = parseInt(process.env.PING_DELAY || '60000', 10); // Default: 1 minuto após iniciar
+
+// Validar intervalo (mínimo 5 minutos, máximo 20 minutos)
+const MIN_INTERVAL = 5 * 60 * 1000; // 5 minutos
+const MAX_INTERVAL = 20 * 60 * 1000; // 20 minutos
+
+const validInterval = Math.max(MIN_INTERVAL, Math.min(MAX_INTERVAL, PING_INTERVAL));
+
+// Inicializar sistema de ping
+if (PING_ENABLED) {
+  console.log('='.repeat(50));
+  console.log('[PING SYSTEM] Sistema de ping automático ATIVADO');
+  console.log(`[PING SYSTEM] Intervalo: ${validInterval / 1000 / 60} minutos`);
+  console.log(`[PING SYSTEM] Primeiro ping em: ${PING_DELAY / 1000} segundos`);
+  console.log(`[PING SYSTEM] URL base: ${process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`}`);
+  console.log('='.repeat(50));
+  
+  // Fazer primeiro ping após delay inicial (permite servidor iniciar completamente)
+  setTimeout(() => {
+    console.log('[PING SYSTEM] Executando primeiro ping...');
+    fazerPingInterno();
+  }, PING_DELAY);
+  
+  // Configurar ping periódico
+  const pingIntervalId = setInterval(() => {
+    fazerPingInterno();
+  }, validInterval);
+  
+  // Salvar interval ID para possível limpeza futura
+  // (útil se precisar parar o ping em algum momento)
+  if (typeof global !== 'undefined') {
+    global.pingIntervalId = pingIntervalId;
+  }
+  
+  // Log de confirmação
+  console.log(`[PING SYSTEM] Ping automático configurado com sucesso!`);
+} else {
+  console.log('[PING SYSTEM] Sistema de ping automático DESATIVADO (PING_ENABLED=false)');
+}
+
+// Função de limpeza (opcional) - útil para parar o ping se necessário
+const pararPing = () => {
+  if (typeof global !== 'undefined' && global.pingIntervalId) {
+    clearInterval(global.pingIntervalId);
+    global.pingIntervalId = null;
+    console.log('[PING SYSTEM] Sistema de ping parado');
+    return true;
+  }
+  return false;
+};
+
+// Expor função globalmente (opcional)
+if (typeof global !== 'undefined') {
+  global.pararPing = pararPing;
+}
+
+// Endpoint para controlar o sistema de ping (opcional)
+app.get('/ping/status', (req, res) => {
+  res.json({
+    enabled: PING_ENABLED,
+    interval: validInterval,
+    intervalMinutes: validInterval / 1000 / 60,
+    running: typeof global !== 'undefined' && global.pingIntervalId !== null
+  });
+});
+
+// Graceful shutdown - parar ping quando servidor for encerrado
+process.on('SIGTERM', () => {
+  console.log('[PING SYSTEM] Recebido SIGTERM, parando ping...');
+  pararPing();
+});
+
+process.on('SIGINT', () => {
+  console.log('[PING SYSTEM] Recebido SIGINT, parando ping...');
+  pararPing();
+});
 
 // Relatório por email (SendGrid) - semanal e geral, disparado por endpoint
 app.post('/report/email', async (req, res) => {
