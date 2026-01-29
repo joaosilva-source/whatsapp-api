@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: whatsapp-api
+    runtime: node-20
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      # Defina PANEL_URL no dashboard = URL do painel na Vercel (sem barra no final)
+      # Ex.: https://seu-painel.vercel.app
+    healthCheckPath: /ping
+    autoDeploy: true
+    disk:
+      name: auth-storage
+      mountPath: /app/auth
+      sizeGB: 1
