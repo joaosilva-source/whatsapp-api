@@ -10,7 +10,9 @@ services:
         value: production
       - key: PORT
         value: 3000
-    healthCheckPath: /status
+      # Defina PANEL_URL no dashboard = URL do painel na Vercel (sem barra no final)
+      # Ex.: https://seu-painel.vercel.app
+    healthCheckPath: /ping
     autoDeploy: true
     disk:
       name: auth-storage
