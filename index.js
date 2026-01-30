@@ -23,13 +23,16 @@ const corsOpts = {
 };
 app.use(cors(corsOpts));
 
-// Preflight OPTIONS: garantir que preflight receba CORS (alguns proxies nao repassam)
-app.options('*', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.setHeader('Access-Control-Max-Age', '86400');
-  res.sendStatus(200);
+// Preflight OPTIONS: middleware para qualquer path (Express 5 nao aceita app.options('*'))
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Max-Age', '86400');
+    return res.sendStatus(200);
+  }
+  next();
 });
 
 // Aumentar limite do body para suportar imagens em base64
