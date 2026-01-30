@@ -12,10 +12,18 @@ const qrcode = require('qrcode-terminal');
 const cors = require('cors');
 
 const app = express();
+
+// CORS: permitir painel na Vercel e outros origins (evitar bloqueio no browser)
+app.use(cors({
+  origin: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 200
+}));
+
 // Aumentar limite do body para suportar imagens em base64
 app.use(express.json({ limit: '15mb' }));
-
-app.use(cors());
 
 let sock = null;
 let isConnected = false;
