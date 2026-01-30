@@ -14,13 +14,23 @@ const cors = require('cors');
 const app = express();
 
 // CORS: permitir painel na Vercel e outros origins (evitar bloqueio no browser)
-app.use(cors({
+const corsOpts = {
   origin: true,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
   optionsSuccessStatus: 200
-}));
+};
+app.use(cors(corsOpts));
+
+// Preflight OPTIONS: garantir que preflight receba CORS (alguns proxies nao repassam)
+app.options('*', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  res.sendStatus(200);
+});
 
 // Aumentar limite do body para suportar imagens em base64
 app.use(express.json({ limit: '15mb' }));
