@@ -147,3 +147,23 @@ app.use((req, res, next) => {
   next();
 });
 ```
+
+---
+
+## Erros comuns (503, CORS, NextAuth 500)
+
+### 503 + CORS no painel ao chamar a API
+
+- **503 (Service Unavailable)** = a API no Render está **em sleep** (plano free) ou o serviço caiu.
+- Quando a resposta é **503**, ela vem do **proxy do Render**, não do seu `index.js`, então **não há headers CORS** → o navegador mostra CORS e 503.
+- **O que fazer:**
+  1. No Render, confira se o serviço está ligado ao repo **JoaoPedroAFK/whatsapp-api** (e não a outro repo antigo).
+  2. Faça **Manual Deploy** e espere subir; abra os **Logs** e escaneie o QR se pedir.
+  3. Depois que aparecer “WHATSAPP CONECTADO”, teste de novo no painel (pode levar 20–30 s para “acordar” no free).
+
+### NextAuth 500 (/api/auth/session)
+
+- **O que fazer na Vercel:** em **Settings → Environment Variables** adicione:
+  - **NEXTAUTH_SECRET** = uma string longa aleatória (ex.: gere em https://generate-secret.vercel.app/32).
+  - **NEXTAUTH_URL** = `https://velotax-painel-eta.vercel.app` (a URL do seu painel, sem barra no final).
+- Confirme que o projeto na Vercel está fazendo deploy do repo que tem o **fallback** do NextAuth (ex.: **JoaoPedroAFK/velotax-painel**) e faça **Redeploy** depois de salvar as variáveis.
