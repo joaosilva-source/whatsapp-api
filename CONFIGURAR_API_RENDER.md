@@ -117,3 +117,30 @@ Depois: **Redeploy** do projeto.
 4. No Render, conferir se **PANEL_URL** é a URL do painel na Vercel
 
 Pronto: envio pelo painel e auto-status por reação ✅/❌ funcionando.
+
+---
+
+## CORS (index.js) — bloco correto
+
+Se o painel na Vercel der erro de CORS ao chamar a API, use no `index.js` **exatamente** este bloco (sem misturar `app.use(cors({` com `const corsOpts`):
+
+```javascript
+// CORS: permitir painel na Vercel e outros origins
+const corsOpts = {
+  origin: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOpts));
+
+// Preflight OPTIONS
+app.options('*', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  res.sendStatus(200);
+});
+```
