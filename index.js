@@ -3,6 +3,7 @@
 // CHANGELOG: v1.1.1 - Ignorar protocolMessage no upsert para reduzir log; v1.1.0 - Ping automático
 
 // Node >= 18 (fetch nativo)
+try { require('dotenv').config(); } catch (e) { /* dotenv opcional (Oracle/VPS) */ }
 
 const express = require('express');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
@@ -12,28 +13,10 @@ const qrcode = require('qrcode-terminal');
 const cors = require('cors');
 
 const app = express();
-
-// CORS: permitir painel na Vercel e outros origins (evitar bloqueio no browser)
-const corsOpts = {
-  origin: true,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-  optionsSuccessStatus: 200
-};
-app.use(cors(corsOpts));
-
-// Preflight OPTIONS: garantir que preflight receba CORS (alguns proxies nao repassam)
-app.options('*', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.setHeader('Access-Control-Max-Age', '86400');
-  res.sendStatus(200);
-});
-
 // Aumentar limite do body para suportar imagens em base64
 app.use(express.json({ limit: '15mb' }));
+
+app.use(cors());
 
 let sock = null;
 let isConnected = false;
@@ -98,58 +81,37 @@ async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
   const BACKEND_URL = process.env.BACKEND_URL ||
                       process.env.VELOHUB_BACKEND_URL ||
                       'https://velohub-278491073220.us-east1.run.app';
-
   // Painel: /api/requests/auto-status (Request por waMessageId); Velohub: /api/escalacoes/solicitacoes/auto-status
   const url = PANEL_URL
     ? `${PANEL_URL}/api/requests/auto-status`
     : `${BACKEND_URL}/api/escalacoes/solicitacoes/auto-status`;
 
+  const body = {
+    waMessageId,
+    reaction, // '✅' ou '❌'
+    reactor: reactorDigits
+  };
+
   try {
-    const body = {
-      waMessageId: waMessageId,
-      reaction: reaction, // '✅' ou '❌'
-      reactor: reactorDigits
-    };
-
-    console.log('[AUTO-STATUS] Fazendo requisição HTTP...');
-    console.log('[AUTO-STATUS] URL:', url);
-    console.log('[AUTO-STATUS] Body:', JSON.stringify(body));
-
+    console.log('[AUTO-STATUS] POST', url, body);
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
 
-    console.log('[AUTO-STATUS] Status HTTP:', response.status);
-    console.log('[AUTO-STATUS] Status Text:', response.statusText);
-
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('[AUTO-STATUS] ❌ Erro HTTP:', response.status, errorText);
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
+      console.error('[AUTO-STATUS] HTTP', response.status, errorText);
+      return null;
     }
 
     const result = await response.json();
-    console.log('[AUTO-STATUS] ✅ Resposta:', JSON.stringify(result, null, 2));
-
-    // Painel retorna o Request atualizado; Velohub pode retornar { success, data }
-    const status = result.status ?? result.data?.status;
-    if (response.ok && (result.id != null || result.success === true)) {
-      console.log('[AUTO-STATUS] ✅ Status atualizado com sucesso! Novo status:', status);
-    } else if (result.error === 'request não encontrado' || result.error === 'Solicitação não encontrada') {
-      console.log('[AUTO-STATUS] Mensagem não encontrada no painel (pode ter sido enviada por outro canal)');
-    } else if (result.error) {
-      console.error('[AUTO-STATUS] ❌ Erro na resposta:', result.error);
-    }
-
+    if (result.success) console.log('[AUTO-STATUS] OK', result.data?.status || result.status);
+    else console.log('[AUTO-STATUS] Resposta:', result.error || result);
     return result;
   } catch (error) {
-    console.error('[AUTO-STATUS] ❌ Erro ao fazer requisição:', error.message);
-    console.error('[AUTO-STATUS] Stack:', error.stack);
-    // Não relançar o erro para não quebrar o fluxo do renderer
+    console.error('[AUTO-STATUS] Erro:', error.message);
     return null;
   }
 }
@@ -262,7 +224,9 @@ async function connect() {
 
         const rx = m?.reactionMessage;
         if (!rx) {
-          // Não logar mensagens que não são reação (reduz ruído: imageMessage, conversation, etc.)
+          if (msg && msg.message) {
+            console.log('[REACTION DEBUG][upsert] message keys:', Object.keys(msg.message));
+          }
         } else {
           const emoji = rx.text;
           const key = rx.key; // mensagem reagida (usa id no painel)
@@ -311,6 +275,10 @@ async function connect() {
           // Só processa se feature estiver habilitada e se o quoted pertencer a um messageId conhecido (enviado via /send)
           const knownMeta = quoted ? metaByMessageId.get(quoted) : null;
           if (!enabled || !quoted || !knownMeta) {
+            // opcional: log leve para diagnóstico
+            if (!enabled) console.log('[REPLY IGNORED] stream desabilitado');
+            else if (!quoted) console.log('[REPLY IGNORED] sem quoted messageId');
+            else console.log('[REPLY IGNORED] quoted desconhecido (não enviado pelo bot)');
             return;
           }
 
