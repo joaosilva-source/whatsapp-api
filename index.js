@@ -72,6 +72,14 @@ app.get('/stream/replies', (req, res) => {
   });
 });
 
+// Header de bypass para Vercel Deployment Protection (chamadas servidor → painel)
+function panelHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  const secret = process.env.PANEL_BYPASS_SECRET || process.env.VERCEL_AUTOMATION_BYPASS_SECRET || '';
+  if (secret) h['x-vercel-protection-bypass'] = secret;
+  return h;
+}
+
 /**
  * Função para atualizar status via reação do WhatsApp
  * Prioridade: painel (PANEL_URL) — onde estão as solicitações/requests; fallback: Velohub (BACKEND_URL)
@@ -96,7 +104,7 @@ async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
     console.log('[AUTO-STATUS] POST', url, body);
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: panelHeaders(),
       body: JSON.stringify(body)
     });
 
@@ -288,7 +296,7 @@ async function connect() {
             const postOnce = async () => {
               const r = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: panelHeaders(),
                 body: JSON.stringify(payload)
               });
               const ok = r.ok; let bodyText = ''; let status = r.status;
@@ -400,7 +408,7 @@ app.get('/debug/reply-test', async (req, res) => {
   const info = { panel, pingUrl, isConnected };
   try {
     if (pingUrl) {
-      const r = await fetch(pingUrl, { method: 'GET' });
+      const r = await fetch(pingUrl, { method: 'GET', headers: panelHeaders() });
       info.requestsOk = r.ok; info.requestsStatus = r.status;
     }
   } catch (e) {
@@ -711,7 +719,7 @@ app.post('/report/email', async (req, res) => {
     if (!panel) return res.status(400).json({ ok: false, error: 'PANEL_URL ausente' });
     if (!key || !to) return res.status(400).json({ ok: false, error: 'SENDGRID_API_KEY ou REPORT_TO ausente' });
 
-    const r = await fetch(`${panel}/api/requests`);
+    const r = await fetch(`${panel}/api/requests`, { headers: panelHeaders() });
     if (!r.ok) return res.status(502).json({ ok: false, error: 'Falha ao buscar requests do painel' });
     const list = await r.json();
     const arr = Array.isArray(list) ? list : [];
