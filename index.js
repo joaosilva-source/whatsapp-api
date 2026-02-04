@@ -3,6 +3,7 @@
 // CHANGELOG: v1.1.1 - Ignorar protocolMessage no upsert para reduzir log; v1.1.0 - Ping automático
 
 // Node >= 18 (fetch nativo)
+try { require('dotenv').config(); } catch (e) { /* dotenv opcional (Oracle/VPS) */ }
 
 const express = require('express');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
@@ -12,31 +13,10 @@ const qrcode = require('qrcode-terminal');
 const cors = require('cors');
 
 const app = express();
-
-// CORS: permitir painel na Vercel e outros origins (evitar bloqueio no browser)
-const corsOpts = {
-  origin: true,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-  optionsSuccessStatus: 200
-};
-app.use(cors(corsOpts));
-
-// Preflight OPTIONS: middleware para qualquer path (Express 5 nao aceita app.options('*'))
-app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.setHeader('Access-Control-Max-Age', '86400');
-    return res.sendStatus(200);
-  }
-  next();
-});
-
 // Aumentar limite do body para suportar imagens em base64
 app.use(express.json({ limit: '15mb' }));
+
+app.use(cors());
 
 let sock = null;
 let isConnected = false;
@@ -92,6 +72,14 @@ app.get('/stream/replies', (req, res) => {
   });
 });
 
+// Header de bypass para Vercel Deployment Protection (chamadas servidor → painel)
+function panelHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  const secret = process.env.PANEL_BYPASS_SECRET || process.env.VERCEL_AUTOMATION_BYPASS_SECRET || '';
+  if (secret) h['x-vercel-protection-bypass'] = secret;
+  return h;
+}
+
 /**
  * Função para atualizar status via reação do WhatsApp
  * Prioridade: painel (PANEL_URL) — onde estão as solicitações/requests; fallback: Velohub (BACKEND_URL)
@@ -101,58 +89,37 @@ async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
   const BACKEND_URL = process.env.BACKEND_URL ||
                       process.env.VELOHUB_BACKEND_URL ||
                       'https://velohub-278491073220.us-east1.run.app';
-
   // Painel: /api/requests/auto-status (Request por waMessageId); Velohub: /api/escalacoes/solicitacoes/auto-status
   const url = PANEL_URL
     ? `${PANEL_URL}/api/requests/auto-status`
     : `${BACKEND_URL}/api/escalacoes/solicitacoes/auto-status`;
 
+  const body = {
+    waMessageId,
+    reaction, // '✅' ou '❌'
+    reactor: reactorDigits
+  };
+
   try {
-    const body = {
-      waMessageId: waMessageId,
-      reaction: reaction, // '✅' ou '❌'
-      reactor: reactorDigits
-    };
-
-    console.log('[AUTO-STATUS] Fazendo requisição HTTP...');
-    console.log('[AUTO-STATUS] URL:', url);
-    console.log('[AUTO-STATUS] Body:', JSON.stringify(body));
-
+    console.log('[AUTO-STATUS] POST', url, body);
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: panelHeaders(),
       body: JSON.stringify(body)
     });
 
-    console.log('[AUTO-STATUS] Status HTTP:', response.status);
-    console.log('[AUTO-STATUS] Status Text:', response.statusText);
-
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('[AUTO-STATUS] ❌ Erro HTTP:', response.status, errorText);
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
+      console.error('[AUTO-STATUS] HTTP', response.status, errorText);
+      return null;
     }
 
     const result = await response.json();
-    console.log('[AUTO-STATUS] ✅ Resposta:', JSON.stringify(result, null, 2));
-
-    // Painel retorna o Request atualizado; Velohub pode retornar { success, data }
-    const status = result.status ?? result.data?.status;
-    if (response.ok && (result.id != null || result.success === true)) {
-      console.log('[AUTO-STATUS] ✅ Status atualizado com sucesso! Novo status:', status);
-    } else if (result.error === 'request não encontrado' || result.error === 'Solicitação não encontrada') {
-      console.log('[AUTO-STATUS] Mensagem não encontrada no painel (pode ter sido enviada por outro canal)');
-    } else if (result.error) {
-      console.error('[AUTO-STATUS] ❌ Erro na resposta:', result.error);
-    }
-
+    if (result.success) console.log('[AUTO-STATUS] OK', result.data?.status || result.status);
+    else console.log('[AUTO-STATUS] Resposta:', result.error || result);
     return result;
   } catch (error) {
-    console.error('[AUTO-STATUS] ❌ Erro ao fazer requisição:', error.message);
-    console.error('[AUTO-STATUS] Stack:', error.stack);
-    // Não relançar o erro para não quebrar o fluxo do renderer
+    console.error('[AUTO-STATUS] Erro:', error.message);
     return null;
   }
 }
@@ -265,7 +232,9 @@ async function connect() {
 
         const rx = m?.reactionMessage;
         if (!rx) {
-          // Não logar mensagens que não são reação (reduz ruído: imageMessage, conversation, etc.)
+          if (msg && msg.message) {
+            console.log('[REACTION DEBUG][upsert] message keys:', Object.keys(msg.message));
+          }
         } else {
           const emoji = rx.text;
           const key = rx.key; // mensagem reagida (usa id no painel)
@@ -314,6 +283,10 @@ async function connect() {
           // Só processa se feature estiver habilitada e se o quoted pertencer a um messageId conhecido (enviado via /send)
           const knownMeta = quoted ? metaByMessageId.get(quoted) : null;
           if (!enabled || !quoted || !knownMeta) {
+            // opcional: log leve para diagnóstico
+            if (!enabled) console.log('[REPLY IGNORED] stream desabilitado');
+            else if (!quoted) console.log('[REPLY IGNORED] sem quoted messageId');
+            else console.log('[REPLY IGNORED] quoted desconhecido (não enviado pelo bot)');
             return;
           }
 
@@ -323,7 +296,7 @@ async function connect() {
             const postOnce = async () => {
               const r = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: panelHeaders(),
                 body: JSON.stringify(payload)
               });
               const ok = r.ok; let bodyText = ''; let status = r.status;
@@ -435,7 +408,7 @@ app.get('/debug/reply-test', async (req, res) => {
   const info = { panel, pingUrl, isConnected };
   try {
     if (pingUrl) {
-      const r = await fetch(pingUrl, { method: 'GET' });
+      const r = await fetch(pingUrl, { method: 'GET', headers: panelHeaders() });
       info.requestsOk = r.ok; info.requestsStatus = r.status;
     }
   } catch (e) {
@@ -746,7 +719,7 @@ app.post('/report/email', async (req, res) => {
     if (!panel) return res.status(400).json({ ok: false, error: 'PANEL_URL ausente' });
     if (!key || !to) return res.status(400).json({ ok: false, error: 'SENDGRID_API_KEY ou REPORT_TO ausente' });
 
-    const r = await fetch(`${panel}/api/requests`);
+    const r = await fetch(`${panel}/api/requests`, { headers: panelHeaders() });
     if (!r.ok) return res.status(502).json({ ok: false, error: 'Falha ao buscar requests do painel' });
     const list = await r.json();
     const arr = Array.isArray(list) ? list : [];
