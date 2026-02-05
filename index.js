@@ -80,6 +80,18 @@ function panelHeaders() {
   return h;
 }
 
+/** Lista de números autorizados a marcar feito/não feito por reação (só dígitos). Vazio = qualquer um. */
+function getAuthorizedReactorList() {
+  const raw = process.env.AUTHORIZED_REACTORS || process.env.AUTHORIZED_REACTION_NUMBER || '';
+  return raw.split(',').map((s) => s.replace(/\D/g, '')).filter(Boolean);
+}
+
+function isReactorAllowed(reactorDigits) {
+  const list = getAuthorizedReactorList();
+  if (list.length === 0) return true;
+  return reactorDigits && list.includes(reactorDigits);
+}
+
 /**
  * Função para atualizar status via reação do WhatsApp
  * Prioridade: painel (PANEL_URL) — onde estão as solicitações/requests; fallback: Velohub (BACKEND_URL)
@@ -198,19 +210,23 @@ async function connect() {
         const outerKey = u?.key || u?.update?.key || {};
         const reactorJid = outerKey.participant || outerKey.remoteJid || '';
         const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
-        const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
+        const allowedList = getAuthorizedReactorList();
 
         console.log('[REACTION][update]', {
           emoji,
           reactorDigits,
           keyId: key?.id,
-          allowed,
+          allowed: allowedList.length ? allowedList.join(',') : '(todos)',
         });
 
         // Processar reações ✅ e ❌
         if (emoji === '✅' || emoji === '❌') {
           const waMessageId = key?.id;
           if (waMessageId) {
+            if (!isReactorAllowed(reactorDigits)) {
+              console.log('[AUTO-STATUS/UPDATE] Ignorado: reator não autorizado', reactorDigits);
+              return;
+            }
             console.log('[AUTO-STATUS/UPDATE] Marcando via reação', emoji, { waMessageId, reactorDigits });
             await atualizarStatusViaReacao(waMessageId, emoji, reactorDigits);
           }
@@ -242,19 +258,23 @@ async function connect() {
           // O REATOR é o sender deste upsert (msg.key)
           const reactorJid = msg?.key?.participant || msg?.key?.remoteJid || '';
           const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
-          const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
+          const allowedList = getAuthorizedReactorList();
 
           console.log('[REACTION][upsert]', {
             emoji,
             reactorDigits,
             keyId: key?.id,
-            allowed,
+            allowed: allowedList.length ? allowedList.join(',') : '(todos)',
           });
 
           // Processar reações ✅ e ❌
           if (emoji === '✅' || emoji === '❌') {
             const waMessageId = key?.id;
             if (waMessageId) {
+              if (!isReactorAllowed(reactorDigits)) {
+                console.log('[AUTO-STATUS/UPSERT] Ignorado: reator não autorizado', reactorDigits);
+                return;
+              }
               console.log('[AUTO-STATUS/UPSERT] Marcando via reação', emoji, { waMessageId, reactorDigits });
               await atualizarStatusViaReacao(waMessageId, emoji, reactorDigits);
             }

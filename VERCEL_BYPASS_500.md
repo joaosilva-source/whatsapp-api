@@ -34,8 +34,15 @@ Se mesmo com bypass o erro continuar:
   - Render: `PANEL_BYPASS_SECRET`
   - Vercel: Protection Bypass for Automation (projeto ou team).
 
-## 5. Testar
+## 5. Reator não autorizado (lista de números)
+
+Se o problema for **número que reagiu não permitido** (não é bloqueio da Vercel): configure **no Render** a lista de autorizados.
+
+- **Key:** `AUTHORIZED_REACTORS` (vários números separados por vírgula, só dígitos) ou `AUTHORIZED_REACTION_NUMBER` (um número).
+- **Exemplo:** `222286686744698,5511999999999`. Vazio = qualquer número pode marcar feito/não feito. Quando o reator não está na lista, a API não chama o painel e o log mostra "Ignorado: reator não autorizado".
+
+## 6. Testar
 
 Após redeploy do serviço no Render e salvar o secret na Vercel, envie uma reação ✅ ou ❌ no WhatsApp. O log deve mostrar `(bypass header enviado)` e a resposta do painel deve ser **200** (não 500).
 
-Se ainda for 500, confira os **logs da função** na Vercel: **Deployments** → último deploy → **Functions** ou **Logs** para o path `api/requests/auto-status`. Se não houver nenhuma linha para essa chamada, a requisição está sendo bloqueada antes da função (proteção Vercel).
+Se ainda for 500, confira os **logs da função** na Vercel (e no Render, se aparece "Ignorado: reator não autorizado"): **Deployments** → último deploy → **Functions** ou **Logs** para o path `api/requests/auto-status`. Se não houver nenhuma linha para essa chamada, a requisição está sendo bloqueada antes da função (proteção Vercel).
