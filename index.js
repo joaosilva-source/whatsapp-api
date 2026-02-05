@@ -101,10 +101,11 @@ async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
   };
 
   try {
-    console.log('[AUTO-STATUS] POST', url, body);
+    const headers = panelHeaders();
+    console.log('[AUTO-STATUS] POST', url, body, headers['x-vercel-protection-bypass'] ? '(bypass header enviado)' : '(sem bypass - defina PANEL_BYPASS_SECRET no Render)');
     const response = await fetch(url, {
       method: 'POST',
-      headers: panelHeaders(),
+      headers,
       body: JSON.stringify(body)
     });
 
