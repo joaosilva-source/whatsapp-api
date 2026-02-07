@@ -615,11 +615,12 @@ app.post('/react', async (req, res) => {
     if (!remoteJid.includes('@')) {
       remoteJid = remoteJid.includes('-') ? `${remoteJid}@g.us` : `${remoteJid}@s.whatsapp.net`;
     }
-    const key = { id: messageId, remoteJid, fromMe: false };
-    if (participant) key.participant = String(participant).trim();
-    await sock.sendMessage(remoteJid, {
-      reaction: { key, text: '✅' }
-    });
+    let partJid = participant ? String(participant).trim() : null;
+    if (partJid && !partJid.includes('@')) partJid = `${partJid}@s.whatsapp.net`;
+    const key = { id: messageId, remoteJid };
+    if (partJid) key.participant = partJid;
+    const content = { reactionMessage: { key, text: '✅' } };
+    await sock.sendMessage(remoteJid, content);
     res.json({ ok: true });
   } catch (e) {
     console.error('[REACT]', e?.message);
