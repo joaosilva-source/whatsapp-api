@@ -80,6 +80,18 @@ function panelHeaders() {
   return h;
 }
 
+/** Lista de números autorizados a marcar feito/não feito por reação (só dígitos). Vazio = qualquer um. */
+function getAuthorizedReactorList() {
+  const raw = process.env.AUTHORIZED_REACTORS || process.env.AUTHORIZED_REACTION_NUMBER || '';
+  return raw.split(',').map((s) => s.replace(/\D/g, '')).filter(Boolean);
+}
+
+function isReactorAllowed(reactorDigits) {
+  const list = getAuthorizedReactorList();
+  if (list.length === 0) return true;
+  return reactorDigits && list.includes(reactorDigits);
+}
+
 /**
  * Função para atualizar status via reação do WhatsApp
  * Prioridade: painel (PANEL_URL) — onde estão as solicitações/requests; fallback: Velohub (BACKEND_URL)
@@ -101,10 +113,11 @@ async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
   };
 
   try {
-    console.log('[AUTO-STATUS] POST', url, body);
+    const headers = panelHeaders();
+    console.log('[AUTO-STATUS] POST', url, body, headers['x-vercel-protection-bypass'] ? '(bypass header enviado)' : '(sem bypass - defina PANEL_BYPASS_SECRET no Render)');
     const response = await fetch(url, {
       method: 'POST',
-      headers: panelHeaders(),
+      headers,
       body: JSON.stringify(body)
     });
 
@@ -197,19 +210,23 @@ async function connect() {
         const outerKey = u?.key || u?.update?.key || {};
         const reactorJid = outerKey.participant || outerKey.remoteJid || '';
         const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
-        const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
+        const allowedList = getAuthorizedReactorList();
 
         console.log('[REACTION][update]', {
           emoji,
           reactorDigits,
           keyId: key?.id,
-          allowed,
+          allowed: allowedList.length ? allowedList.join(',') : '(todos)',
         });
 
         // Processar reações ✅ e ❌
         if (emoji === '✅' || emoji === '❌') {
           const waMessageId = key?.id;
           if (waMessageId) {
+            if (!isReactorAllowed(reactorDigits)) {
+              console.log('[AUTO-STATUS/UPDATE] Ignorado: reator não autorizado', reactorDigits);
+              return;
+            }
             console.log('[AUTO-STATUS/UPDATE] Marcando via reação', emoji, { waMessageId, reactorDigits });
             await atualizarStatusViaReacao(waMessageId, emoji, reactorDigits);
           }
@@ -241,19 +258,23 @@ async function connect() {
           // O REATOR é o sender deste upsert (msg.key)
           const reactorJid = msg?.key?.participant || msg?.key?.remoteJid || '';
           const reactorDigits = String(reactorJid || '').replace(/\D/g, '');
-          const allowed = (process.env.AUTHORIZED_REACTION_NUMBER || '').replace(/\D/g, '');
+          const allowedList = getAuthorizedReactorList();
 
           console.log('[REACTION][upsert]', {
             emoji,
             reactorDigits,
             keyId: key?.id,
-            allowed,
+            allowed: allowedList.length ? allowedList.join(',') : '(todos)',
           });
 
           // Processar reações ✅ e ❌
           if (emoji === '✅' || emoji === '❌') {
             const waMessageId = key?.id;
             if (waMessageId) {
+              if (!isReactorAllowed(reactorDigits)) {
+                console.log('[AUTO-STATUS/UPSERT] Ignorado: reator não autorizado', reactorDigits);
+                return;
+              }
               console.log('[AUTO-STATUS/UPSERT] Marcando via reação', emoji, { waMessageId, reactorDigits });
               await atualizarStatusViaReacao(waMessageId, emoji, reactorDigits);
             }
@@ -292,7 +313,10 @@ async function connect() {
 
           if (panel && text && quoted) {
             const url = `${panel}/api/requests/reply`;
-            const payload = { waMessageId: quoted, reactor, text };
+            const replyMessageId = msg?.key?.id || null;
+            const replyMessageJid = msg?.key?.remoteJid || null;
+            const replyMessageParticipant = msg?.key?.participant || null;
+            const payload = { waMessageId: quoted, reactor, text, replyMessageId, replyMessageJid, replyMessageParticipant };
             const postOnce = async () => {
               const r = await fetch(url, {
                 method: 'POST',
@@ -574,6 +598,32 @@ app.get('/grupos', async (req, res) => {
     res.json(lista);
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Reação em mensagem (check inverso: agente confirma visto → ✓ na mensagem no WhatsApp)
+app.post('/react', async (req, res) => {
+  const { messageId, jid, participant } = req.body || {};
+  if (!isConnected || !sock) {
+    return res.status(503).json({ ok: false, error: 'WhatsApp desconectado' });
+  }
+  if (!messageId || !jid) {
+    return res.status(400).json({ ok: false, error: 'messageId e jid são obrigatórios' });
+  }
+  try {
+    let remoteJid = String(jid).trim();
+    if (!remoteJid.includes('@')) {
+      remoteJid = remoteJid.includes('-') ? `${remoteJid}@g.us` : `${remoteJid}@s.whatsapp.net`;
+    }
+    const key = { id: messageId, remoteJid, fromMe: false };
+    if (participant) key.participant = String(participant).trim();
+    await sock.sendMessage(remoteJid, {
+      reaction: { key, text: '✅' }
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[REACT]', e?.message);
+    res.status(500).json({ ok: false, error: e?.message || 'Falha ao enviar reação' });
   }
 });
 
