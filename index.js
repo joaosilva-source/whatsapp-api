@@ -601,7 +601,6 @@ app.get('/grupos', async (req, res) => {
   }
 });
 
-// Reação em mensagem (check inverso: agente confirma visto → ✓ na mensagem no WhatsApp)
 // Reação em mensagem (check inverso: agente confirma visto → ✓ no WhatsApp)
 // No Baileys a reação usa "react" com key { remoteJid, id, fromMe } — não reactionMessage.
 app.post('/react', async (req, res) => {
@@ -619,17 +618,18 @@ app.post('/react', async (req, res) => {
     }
     const key = {
       remoteJid,
-      id: messageId,
+      id: String(messageId).trim(),
       fromMe: false
     };
-    if (participant && remoteJid.endsWith('@g.us')) {
+    if (participant != null && String(participant).trim() && remoteJid.endsWith('@g.us')) {
       let partJid = String(participant).trim();
-      if (partJid && !partJid.includes('@')) partJid = `${partJid}@s.whatsapp.net`;
-      if (partJid) key.participant = partJid;
+      if (!partJid.includes('@')) partJid = `${partJid}@s.whatsapp.net`;
+      key.participant = partJid;
     }
-    await sock.sendMessage(remoteJid, {
-      react: { text: '✅', key }
-    });
+    const reactPayload = { react: { text: '✅', key } };
+    console.log('[REACT] enviando', { messageId: key.id, remoteJid, participant: key.participant || '(dm)' });
+    const result = await sock.sendMessage(remoteJid, reactPayload);
+    console.log('[REACT] sendMessage retornou', result ? 'ok' : 'vazio');
     res.json({ ok: true });
   } catch (e) {
     console.error('[REACT]', e?.message);
