@@ -315,7 +315,17 @@ async function connect() {
             const url = `${panel}/api/requests/reply`;
             const replyMessageId = msg?.key?.id || null;
             const replyMessageJid = msg?.key?.remoteJid || null;
-            const replyMessageParticipant = msg?.key?.participant || null;
+            // Em grupo, a reação exige participant = PN (@s.whatsapp.net). @lid é ignorado pelo WhatsApp.
+            let replyMessageParticipant = msg?.key?.participantAlt || msg?.key?.participant || null;
+            if (replyMessageParticipant && String(replyMessageParticipant).endsWith('@lid')) {
+              try {
+                const store = sock?.signalRepository?.getLIDMappingStore?.();
+                if (store && typeof store.getPNForLID === 'function') {
+                  const pn = await Promise.resolve(store.getPNForLID(replyMessageParticipant));
+                  if (pn) replyMessageParticipant = pn;
+                }
+              } catch (_) {}
+            }
             const payload = { waMessageId: quoted, reactor, text, replyMessageId, replyMessageJid, replyMessageParticipant };
             const postOnce = async () => {
               const r = await fetch(url, {
@@ -601,8 +611,22 @@ app.get('/grupos', async (req, res) => {
   }
 });
 
+// Resolve participant para PN (@s.whatsapp.net). Em grupo, key com @lid é ignorado pelo WhatsApp.
+async function resolveParticipantToPN(participantJid) {
+  if (!participantJid || !sock) return participantJid;
+  const jid = String(participantJid).trim();
+  if (jid.endsWith('@s.whatsapp.net')) return jid;
+  if (!jid.endsWith('@lid')) return jid;
+  try {
+    const store = sock.signalRepository?.getLIDMappingStore?.();
+    if (!store || typeof store.getPNForLID !== 'function') return participantJid;
+    const pn = await Promise.resolve(store.getPNForLID(jid));
+    return pn || participantJid;
+  } catch (_) { return participantJid; }
+}
+
 // Reação em mensagem (check inverso: agente confirma visto → ✓ no WhatsApp)
-// No Baileys a reação usa "react" com key { remoteJid, id, fromMe } — não reactionMessage.
+// Em grupo o key DEVE usar participant = PN (@s.whatsapp.net). @lid faz o WhatsApp descartar a reação.
 app.post('/react', async (req, res) => {
   const { messageId, jid, participant } = req.body || {};
   if (!isConnected || !sock) {
@@ -623,7 +647,11 @@ app.post('/react', async (req, res) => {
     };
     if (participant != null && String(participant).trim() && remoteJid.endsWith('@g.us')) {
       let partJid = String(participant).trim();
-      if (!partJid.includes('@')) partJid = `${partJid}@s.whatsapp.net`;
+      if (partJid.endsWith('@lid')) {
+        partJid = await resolveParticipantToPN(partJid) || partJid;
+      } else if (!partJid.includes('@')) {
+        partJid = `${partJid}@s.whatsapp.net`;
+      }
       key.participant = partJid;
     }
     const reactPayload = { react: { text: '✅', key } };
