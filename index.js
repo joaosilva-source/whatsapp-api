@@ -6,9 +6,7 @@
 try { require('dotenv').config(); } catch (e) { /* dotenv opcional (Oracle/VPS) */ }
 
 const express = require('express');
-const Baileys = require('@whiskeysockets/baileys');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = Baileys;
-const proto = Baileys.proto || null;
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
 const qrcode = require('qrcode-terminal');
@@ -604,6 +602,8 @@ app.get('/grupos', async (req, res) => {
 });
 
 // Reação em mensagem (check inverso: agente confirma visto → ✓ na mensagem no WhatsApp)
+// Reação em mensagem (check inverso: agente confirma visto → ✓ no WhatsApp)
+// No Baileys a reação usa "react" com key { remoteJid, id, fromMe } — não reactionMessage.
 app.post('/react', async (req, res) => {
   const { messageId, jid, participant } = req.body || {};
   if (!isConnected || !sock) {
@@ -617,26 +617,19 @@ app.post('/react', async (req, res) => {
     if (!remoteJid.includes('@')) {
       remoteJid = remoteJid.includes('-') ? `${remoteJid}@g.us` : `${remoteJid}@s.whatsapp.net`;
     }
-    let partJid = participant ? String(participant).trim() : null;
-    if (partJid && !partJid.includes('@')) partJid = `${partJid}@s.whatsapp.net`;
-    const key = { id: messageId, remoteJid, fromMe: false };
-    if (partJid && remoteJid.endsWith('@g.us')) key.participant = partJid;
-    const reactionPayload = { key, text: '✅', senderTimestampMs: Date.now() };
-    let message;
-    if (proto && proto.Message && typeof proto.Message.fromObject === 'function') {
-      try {
-        message = proto.Message.fromObject({ reactionMessage: reactionPayload });
-      } catch (_) {
-        message = { reactionMessage: reactionPayload };
-      }
-    } else {
-      message = { reactionMessage: reactionPayload };
+    const key = {
+      remoteJid,
+      id: messageId,
+      fromMe: false
+    };
+    if (participant && remoteJid.endsWith('@g.us')) {
+      let partJid = String(participant).trim();
+      if (partJid && !partJid.includes('@')) partJid = `${partJid}@s.whatsapp.net`;
+      if (partJid) key.participant = partJid;
     }
-    if (typeof sock.relayMessage === 'function') {
-      await sock.relayMessage(remoteJid, message);
-    } else {
-      await sock.sendMessage(remoteJid, message);
-    }
+    await sock.sendMessage(remoteJid, {
+      react: { text: '✅', key }
+    });
     res.json({ ok: true });
   } catch (e) {
     console.error('[REACT]', e?.message);
