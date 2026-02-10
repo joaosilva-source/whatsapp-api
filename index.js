@@ -6,7 +6,9 @@
 try { require('dotenv').config(); } catch (e) { /* dotenv opcional (Oracle/VPS) */ }
 
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const Baileys = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = Baileys;
+const proto = Baileys.proto || null;
 const pino = require('pino');
 const fs = require('fs');
 const qrcode = require('qrcode-terminal');
@@ -617,10 +619,24 @@ app.post('/react', async (req, res) => {
     }
     let partJid = participant ? String(participant).trim() : null;
     if (partJid && !partJid.includes('@')) partJid = `${partJid}@s.whatsapp.net`;
-    const key = { id: messageId, remoteJid };
-    if (partJid) key.participant = partJid;
-    const content = { reactionMessage: { key, text: '✅' } };
-    await sock.sendMessage(remoteJid, content);
+    const key = { id: messageId, remoteJid, fromMe: false };
+    if (partJid && remoteJid.endsWith('@g.us')) key.participant = partJid;
+    const reactionPayload = { key, text: '✅', senderTimestampMs: Date.now() };
+    let message;
+    if (proto && proto.Message && typeof proto.Message.fromObject === 'function') {
+      try {
+        message = proto.Message.fromObject({ reactionMessage: reactionPayload });
+      } catch (_) {
+        message = { reactionMessage: reactionPayload };
+      }
+    } else {
+      message = { reactionMessage: reactionPayload };
+    }
+    if (typeof sock.relayMessage === 'function') {
+      await sock.relayMessage(remoteJid, message);
+    } else {
+      await sock.sendMessage(remoteJid, message);
+    }
     res.json({ ok: true });
   } catch (e) {
     console.error('[REACT]', e?.message);
