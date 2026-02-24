@@ -1,6 +1,6 @@
 // index.js - Backend Render (Express + Baileys)
-// VERSION: v1.2.0 | DATE: 2026-02-24 | AUTHOR: VeloHub Development Team
-// CHANGELOG: v1.2.0 - Baileys 7.0.0-rc.9 (ESM dynamic import + getMessage); v1.1.5 - Versao fixa 405
+// VERSION: v1.2.1 | DATE: 2026-02-24 | AUTHOR: VeloHub Development Team
+// CHANGELOG: v1.2.1 - Versao WhatsApp 2.3000.1033962578 (fev/2026) para evitar 405; v1.2.0 - Baileys 7
 
 // Node >= 18 (fetch nativo). Baileys 7.x é ESM — carregado por dynamic import
 try { require('dotenv').config(); } catch (e) { /* dotenv opcional (Oracle/VPS) */ }
@@ -153,8 +153,8 @@ async function connect() {
 
   const { state, saveCreds } = await useMultiFileAuthState('auth');
 
-  // Versão fixa evita 405 (Method Not Allowed) por descompasso com servidor WhatsApp
-  const WHATSAPP_VERSION = [2, 3000, 1027934701];
+  // Versão atual (fev/2026) — ver https://wppconnect.io/whatsapp-versions/
+  const WHATSAPP_VERSION = [2, 3000, 1033962578];
 
   sock = makeWASocket({
     version: WHATSAPP_VERSION,
