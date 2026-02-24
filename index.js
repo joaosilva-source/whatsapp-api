@@ -177,9 +177,11 @@ async function connect() {
       const reason = lastDisconnect?.error?.output?.statusCode;
       console.log('Status de disconnect:', reason);
 
-      if (reason === DisconnectReason.loggedOut) {
-        console.log('DESLOGADO -> apagando auth e pedindo QR novamente...');
-        fs.rmSync('auth', { recursive: true, force: true });
+      // 401 = loggedOut; 405 = Method Not Allowed (sessão/versão inválida) -> forçar novo QR
+      const precisaNovoQR = reason === DisconnectReason.loggedOut || reason === 405;
+      if (precisaNovoQR) {
+        console.log(reason === 405 ? '405 (sessão inválida) -> apagando auth e pedindo QR novamente...' : 'DESLOGADO -> apagando auth e pedindo QR novamente...');
+        try { fs.rmSync('auth', { recursive: true, force: true }); } catch (e) { console.log('Erro ao apagar auth:', e.message); }
       } else {
         console.log('Desconectado -> tentando reconectar sem pedir QR...');
       }
