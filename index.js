@@ -1,13 +1,16 @@
 // index.js - Backend Render (Express + Baileys)
-// VERSION: v1.1.5 | DATE: 2026-02-24 | AUTHOR: VeloHub Development Team
-// CHANGELOG: v1.1.5 - Versao fixa WhatsApp [2,3000,1027934701] para evitar 405; v1.1.4 - Backoff 405
+// VERSION: v1.2.0 | DATE: 2026-02-24 | AUTHOR: VeloHub Development Team
+// CHANGELOG: v1.2.0 - Baileys 7.0.0-rc.9 (ESM dynamic import + getMessage); v1.1.5 - Versao fixa 405
 
-// Node >= 18 (fetch nativo)
+// Node >= 18 (fetch nativo). Baileys 7.x é ESM — carregado por dynamic import
 try { require('dotenv').config(); } catch (e) { /* dotenv opcional (Oracle/VPS) */ }
 
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
+/** Baileys 7 (ESM): preenchido por loadBaileys() antes de connect() */
+let makeWASocket;
+let useMultiFileAuthState;
+let DisconnectReason;
 const fs = require('fs');
 const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
@@ -157,6 +160,7 @@ async function connect() {
     version: WHATSAPP_VERSION,
     auth: state,
     logger: pino({ level: 'silent' }),
+    getMessage: async () => undefined,
     browser: ['Chrome', 'Ubuntu', '20.04'],
     keepAliveIntervalMs: 10000,
     syncFullHistory: true,
@@ -387,7 +391,20 @@ async function connect() {
   sock.ev.on('creds.update', saveCreds);
 }
 
-connect();
+/** Carrega Baileys (ESM) e inicia conexão WhatsApp */
+async function loadBaileysAndConnect() {
+  try {
+    const baileys = await import('@whiskeysockets/baileys');
+    makeWASocket = baileys.default;
+    useMultiFileAuthState = baileys.useMultiFileAuthState;
+    DisconnectReason = baileys.DisconnectReason;
+    connect();
+  } catch (e) {
+    console.error('[BAILEYS] Erro ao carregar:', e.message);
+    setTimeout(loadBaileysAndConnect, 10000);
+  }
+}
+loadBaileysAndConnect();
 
 // Health
 app.get('/', (req, res) => {
