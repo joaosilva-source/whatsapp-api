@@ -1,6 +1,6 @@
 // index.js - Backend Render (Express + Baileys)
-// VERSION: v1.1.4 | DATE: 2026-02-24 | AUTHOR: VeloHub Development Team
-// CHANGELOG: v1.1.4 - Backoff em 405 (5s->15s->25s..60s) para QR aparecer; v1.1.3 - GET /qr; v1.1.2 - Fix 405
+// VERSION: v1.1.5 | DATE: 2026-02-24 | AUTHOR: VeloHub Development Team
+// CHANGELOG: v1.1.5 - Versao fixa WhatsApp [2,3000,1027934701] para evitar 405; v1.1.4 - Backoff 405
 
 // Node >= 18 (fetch nativo)
 try { require('dotenv').config(); } catch (e) { /* dotenv opcional (Oracle/VPS) */ }
@@ -150,7 +150,11 @@ async function connect() {
 
   const { state, saveCreds } = await useMultiFileAuthState('auth');
 
+  // Versão fixa evita 405 (Method Not Allowed) por descompasso com servidor WhatsApp
+  const WHATSAPP_VERSION = [2, 3000, 1027934701];
+
   sock = makeWASocket({
+    version: WHATSAPP_VERSION,
     auth: state,
     logger: pino({ level: 'silent' }),
     browser: ['Chrome', 'Ubuntu', '20.04'],
