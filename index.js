@@ -1,6 +1,6 @@
 // index.js - Backend Render (Express + Baileys)
-// VERSION: v1.1.1 | DATE: 2025-01-28 | AUTHOR: VeloHub Development Team
-// CHANGELOG: v1.1.1 - Ignorar protocolMessage no upsert para reduzir log; v1.1.0 - Ping automático
+// VERSION: v1.1.2 | DATE: 2026-02-24 | AUTHOR: VeloHub Development Team
+// CHANGELOG: v1.1.2 - Tratar disconnect 405 como sessão inválida e forçar novo QR; v1.1.1 - Ignorar protocolMessage no upsert
 
 // Node >= 18 (fetch nativo)
 try { require('dotenv').config(); } catch (e) { /* dotenv opcional (Oracle/VPS) */ }
@@ -177,9 +177,11 @@ async function connect() {
       const reason = lastDisconnect?.error?.output?.statusCode;
       console.log('Status de disconnect:', reason);
 
-      if (reason === DisconnectReason.loggedOut) {
-        console.log('DESLOGADO -> apagando auth e pedindo QR novamente...');
-        fs.rmSync('auth', { recursive: true, force: true });
+      // 401 = loggedOut; 405 = Method Not Allowed (sessão/versão inválida) -> forçar novo QR
+      const precisaNovoQR = reason === DisconnectReason.loggedOut || reason === 405;
+      if (precisaNovoQR) {
+        console.log(reason === 405 ? '405 (sessão inválida) -> apagando auth e pedindo QR novamente...' : 'DESLOGADO -> apagando auth e pedindo QR novamente...');
+        try { fs.rmSync('auth', { recursive: true, force: true }); } catch (e) { console.log('Erro ao apagar auth:', e.message); }
       } else {
         console.log('Desconectado -> tentando reconectar sem pedir QR...');
       }
@@ -313,7 +315,20 @@ async function connect() {
 
           if (panel && text && quoted) {
             const url = `${panel}/api/requests/reply`;
-            const payload = { waMessageId: quoted, reactor, text };
+            const replyMessageId = msg?.key?.id || null;
+            const replyMessageJid = msg?.key?.remoteJid || null;
+            // Em grupo, a reação exige participant = PN (@s.whatsapp.net). @lid é ignorado pelo WhatsApp.
+            let replyMessageParticipant = msg?.key?.participantAlt || msg?.key?.participant || null;
+            if (replyMessageParticipant && String(replyMessageParticipant).endsWith('@lid')) {
+              try {
+                const store = sock?.signalRepository?.getLIDMappingStore?.();
+                if (store && typeof store.getPNForLID === 'function') {
+                  const pn = await Promise.resolve(store.getPNForLID(replyMessageParticipant));
+                  if (pn) replyMessageParticipant = pn;
+                }
+              } catch (_) {}
+            }
+            const payload = { waMessageId: quoted, reactor, text, replyMessageId, replyMessageJid, replyMessageParticipant };
             const postOnce = async () => {
               const r = await fetch(url, {
                 method: 'POST',
@@ -595,6 +610,60 @@ app.get('/grupos', async (req, res) => {
     res.json(lista);
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Resolve participant para PN (@s.whatsapp.net). Em grupo, key com @lid é ignorado pelo WhatsApp.
+async function resolveParticipantToPN(participantJid) {
+  if (!participantJid || !sock) return participantJid;
+  const jid = String(participantJid).trim();
+  if (jid.endsWith('@s.whatsapp.net')) return jid;
+  if (!jid.endsWith('@lid')) return jid;
+  try {
+    const store = sock.signalRepository?.getLIDMappingStore?.();
+    if (!store || typeof store.getPNForLID !== 'function') return participantJid;
+    const pn = await Promise.resolve(store.getPNForLID(jid));
+    return pn || participantJid;
+  } catch (_) { return participantJid; }
+}
+
+// Reação em mensagem (check inverso: agente confirma visto → ✓ no WhatsApp)
+// Em grupo o key DEVE usar participant = PN (@s.whatsapp.net). @lid faz o WhatsApp descartar a reação.
+app.post('/react', async (req, res) => {
+  const { messageId, jid, participant } = req.body || {};
+  if (!isConnected || !sock) {
+    return res.status(503).json({ ok: false, error: 'WhatsApp desconectado' });
+  }
+  if (!messageId || !jid) {
+    return res.status(400).json({ ok: false, error: 'messageId e jid são obrigatórios' });
+  }
+  try {
+    let remoteJid = String(jid).trim();
+    if (!remoteJid.includes('@')) {
+      remoteJid = remoteJid.includes('-') ? `${remoteJid}@g.us` : `${remoteJid}@s.whatsapp.net`;
+    }
+    const key = {
+      remoteJid,
+      id: String(messageId).trim(),
+      fromMe: false
+    };
+    if (participant != null && String(participant).trim() && remoteJid.endsWith('@g.us')) {
+      let partJid = String(participant).trim();
+      if (partJid.endsWith('@lid')) {
+        partJid = await resolveParticipantToPN(partJid) || partJid;
+      } else if (!partJid.includes('@')) {
+        partJid = `${partJid}@s.whatsapp.net`;
+      }
+      key.participant = partJid;
+    }
+    const reactPayload = { react: { text: '✅', key } };
+    console.log('[REACT] enviando', { messageId: key.id, remoteJid, participant: key.participant || '(dm)' });
+    const result = await sock.sendMessage(remoteJid, reactPayload);
+    console.log('[REACT] sendMessage retornou', result ? 'ok' : 'vazio');
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[REACT]', e?.message);
+    res.status(500).json({ ok: false, error: e?.message || 'Falha ao enviar reação' });
   }
 });
 
