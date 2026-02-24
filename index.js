@@ -1,6 +1,6 @@
 // index.js - Backend Render (Express + Baileys)
-// VERSION: v1.1.1 | DATE: 2025-01-28 | AUTHOR: VeloHub Development Team
-// CHANGELOG: v1.1.1 - Ignorar protocolMessage no upsert para reduzir log; v1.1.0 - Ping automático
+// VERSION: v1.1.3 | DATE: 2026-02-24 | AUTHOR: VeloHub Development Team
+// CHANGELOG: v1.1.3 - GET /qr (HTML com imagem) para painel exibir QR; v1.1.2 - Fix 405/QR; v1.1.1 - Ignorar protocolMessage
 
 // Node >= 18 (fetch nativo)
 try { require('dotenv').config(); } catch (e) { /* dotenv opcional (Oracle/VPS) */ }
@@ -10,6 +10,7 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const pino = require('pino');
 const fs = require('fs');
 const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const cors = require('cors');
 
 const app = express();
@@ -21,6 +22,8 @@ app.use(cors());
 let sock = null;
 let isConnected = false;
 let reconnecting = false;
+/** Último QR em data URL para servir em GET /qr (painel/escaneamento) */
+let lastQrDataUrl = null;
 
 // Meta e stream de respostas em memória (não persistente)
 const metaByMessageId = new Map(); // messageId -> { cpf, solicitacao }
@@ -161,10 +164,12 @@ async function connect() {
     if (qr) {
       console.log('\nESCANEIE O QR CODE AGORA:\n');
       qrcode.generate(qr, { small: true });
+      QRCode.toDataURL(qr).then((url) => { lastQrDataUrl = url; }).catch(() => {});
     }
 
     if (connection === 'open') {
       isConnected = true;
+      lastQrDataUrl = null;
       reconnecting = false;
       console.log('\nWHATSAPP CONECTADO! API PRONTA!');
       const url = process.env.RENDER_EXTERNAL_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
@@ -375,6 +380,18 @@ connect();
 app.get('/', (req, res) => {
   const url = process.env.RENDER_EXTERNAL_URL || `https://${req.headers.host}`;
   res.send(`Velotax WhatsApp API - ONLINE\n\nPOST: ${url}/send\nStatus: ${isConnected ? 'CONECTADO' : 'Desconectado'}`);
+});
+
+/** GET /qr — página HTML com QR para escanear (evita depender dos logs do Render) */
+app.get('/qr', (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  if (isConnected) {
+    return res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>WhatsApp</title></head><body style="font-family:sans-serif;text-align:center;padding:2rem;"><p><strong>WhatsApp já conectado.</strong></p><p>Não é necessário escanear QR.</p></body></html>`);
+  }
+  if (lastQrDataUrl) {
+    return res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Escanear QR - WhatsApp</title></head><body style="font-family:sans-serif;text-align:center;padding:2rem;"><h1>Escanear QR Code</h1><p>Abra o WhatsApp no celular → Dispositivos conectados → Conectar dispositivo</p><p><img src="${lastQrDataUrl}" alt="QR Code" style="max-width:280px;height:auto;"></p><p><small>O QR atualiza automaticamente. Se expirar, aguarde alguns segundos.</small></p></body></html>`);
+  }
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>QR</title></head><body style="font-family:sans-serif;text-align:center;padding:2rem;"><p>Aguardando QR... Recarregue em alguns segundos.</p><p><a href="/qr">Recarregar</a></p></body></html>`);
 });
 
 // ============================================
