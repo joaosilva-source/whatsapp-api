@@ -1,6 +1,6 @@
 // index.js - Backend Render (Express + Baileys)
-// VERSION: v1.1.3 | DATE: 2026-02-24 | AUTHOR: VeloHub Development Team
-// CHANGELOG: v1.1.3 - GET /qr (HTML com imagem) para painel exibir QR; v1.1.2 - Fix 405/QR; v1.1.1 - Ignorar protocolMessage
+// VERSION: v1.1.4 | DATE: 2026-02-24 | AUTHOR: VeloHub Development Team
+// CHANGELOG: v1.1.4 - Backoff em 405 (5s->15s->25s..60s) para QR aparecer; v1.1.3 - GET /qr; v1.1.2 - Fix 405
 
 // Node >= 18 (fetch nativo)
 try { require('dotenv').config(); } catch (e) { /* dotenv opcional (Oracle/VPS) */ }
@@ -24,6 +24,9 @@ let isConnected = false;
 let reconnecting = false;
 /** Último QR em data URL para servir em GET /qr (painel/escaneamento) */
 let lastQrDataUrl = null;
+/** Backoff em ms ao receber 405 (evitar loop e dar tempo do servidor enviar QR) */
+let reconnectDelay405 = 5000;
+const RECONNECT_DELAY_405_MAX = 60000;
 
 // Meta e stream de respostas em memória (não persistente)
 const metaByMessageId = new Map(); // messageId -> { cpf, solicitacao }
@@ -162,6 +165,7 @@ async function connect() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
+      reconnectDelay405 = 5000;
       console.log('\nESCANEIE O QR CODE AGORA:\n');
       qrcode.generate(qr, { small: true });
       QRCode.toDataURL(qr).then((url) => { lastQrDataUrl = url; }).catch(() => {});
@@ -171,6 +175,7 @@ async function connect() {
       isConnected = true;
       lastQrDataUrl = null;
       reconnecting = false;
+      reconnectDelay405 = 5000;
       console.log('\nWHATSAPP CONECTADO! API PRONTA!');
       const url = process.env.RENDER_EXTERNAL_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
       if (url) console.log(`API ONLINE: ${url}/send`);
@@ -184,9 +189,13 @@ async function connect() {
 
       // 401 = loggedOut; 405 = Method Not Allowed (sessão/versão inválida) -> forçar novo QR
       const precisaNovoQR = reason === DisconnectReason.loggedOut || reason === 405;
+      const delayMs = reason === 405 ? reconnectDelay405 : 2000;
       if (precisaNovoQR) {
-        console.log(reason === 405 ? '405 (sessão inválida) -> apagando auth e pedindo QR novamente...' : 'DESLOGADO -> apagando auth e pedindo QR novamente...');
+        console.log(reason === 405 ? `405 (sessão inválida) -> apagando auth. Reconectando em ${delayMs / 1000}s...` : 'DESLOGADO -> apagando auth e pedindo QR novamente...');
         try { fs.rmSync('auth', { recursive: true, force: true }); } catch (e) { console.log('Erro ao apagar auth:', e.message); }
+        if (reason === 405) {
+          reconnectDelay405 = Math.min(RECONNECT_DELAY_405_MAX, reconnectDelay405 + 10000);
+        }
       } else {
         console.log('Desconectado -> tentando reconectar sem pedir QR...');
       }
@@ -194,7 +203,7 @@ async function connect() {
       setTimeout(() => {
         reconnecting = false;
         connect();
-      }, 2000);
+      }, delayMs);
     }
   });
 
