@@ -1,0 +1,28 @@
+# Fly.io - whatsapp-api
+# Ajuste 'app' se quiser outro nome (ex.: whatsapp-api-velotax)
+
+app = "whatsapp-api"
+
+[build]
+
+[env]
+  PORT = "3000"
+  NODE_ENV = "production"
+
+# Pasta auth persistente (crie o volume antes: fly volumes create whatsapp_auth -r <regiao>)
+[mounts]
+  source = "whatsapp_auth"
+  destination = "/app/auth"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
