@@ -1,4 +1,6 @@
-# API no Render + Painel na Vercel — Passo a passo resumido
+# API no Render + Painel (Vercel ou Netlify) — Passo a passo resumido
+
+**Exemplo de API no Render:** `https://whatsapp-api-y40p.onrender.com`
 
 ---
 
@@ -38,10 +40,10 @@
 ```
 NODE_ENV=production
 PORT=3000
-PANEL_URL=https://SEU-PAINEL.vercel.app
+PANEL_URL=https://painel-velotax.netlify.app
 ```
 
-Troque `https://SEU-PAINEL.vercel.app` pela URL real do painel na Vercel (sem barra no final).
+Se o painel estiver na Vercel, use a URL do painel na Vercel (ex.: `https://seu-painel.vercel.app`). Sem barra no final.
 
 Opcionais (evitar sleep / respostas citadas):
 
@@ -61,31 +63,27 @@ REPLIES_STREAM_ENABLED=0
 
 ---
 
-## Parte 2: Painel na Vercel
+## Parte 2: Painel (Netlify ou Vercel)
 
-### 1. Deploy
+### Painel na Netlify
 
-1. [vercel.com](https://vercel.com) → **Add New** → **Project**
-2. Importe o repo **JoaoPedroAFK/velotax-painel**
-3. Framework: Next.js (automático) → **Deploy**
+1. [app.netlify.com](https://app.netlify.com) → Site do painel (ex.: **painel-velotax**)
+2. **Site configuration** → **Environment variables** → **Add a variable** / **Edit**
+3. Defina:
 
-### 2. Variáveis de ambiente (Vercel)
+| Nome | Valor |
+|------|--------|
+| **NEXT_PUBLIC_API_URL** | `https://whatsapp-api-y40p.onrender.com` (sem barra no final) |
+| **NEXT_PUBLIC_DEFAULT_JID** | ID do grupo (ex.: `120363400851545835@g.us`) — copie de `https://whatsapp-api-y40p.onrender.com/grupos` |
 
-**Settings** → **Environment Variables** — adicione:
+4. **Trigger deploy** para aplicar as variáveis.
 
-```
-DATABASE_URL=postgresql://USUARIO:SENHA@HOST:5432/BANCO?schema=public
-NEXT_PUBLIC_API_URL=https://whatsapp-api-xxxx.onrender.com
-NEXT_PUBLIC_DEFAULT_JID=120363400851545835@g.us
-```
+### Painel na Vercel
 
-Substitua:
-
-- **DATABASE_URL:** sua connection string do Postgres (Supabase ou outro)
-- **NEXT_PUBLIC_API_URL:** URL do serviço no Render (a que você anotou), sem barra no final
-- **NEXT_PUBLIC_DEFAULT_JID:** o `id` que você copiou de `/grupos`
-
-Depois: **Redeploy** do projeto.
+1. [vercel.com](https://vercel.com) → Projeto do painel
+2. **Settings** → **Environment Variables**
+3. Adicione **NEXT_PUBLIC_API_URL** = `https://whatsapp-api-y40p.onrender.com` e **NEXT_PUBLIC_DEFAULT_JID** = id do grupo (de `/grupos`)
+4. **Redeploy** do projeto.
 
 ---
 
@@ -97,15 +95,14 @@ Depois: **Redeploy** do projeto.
 |------|------------------|
 | NODE_ENV | `production` |
 | PORT | `3000` |
-| PANEL_URL | `https://velotax-painel.vercel.app` |
+| PANEL_URL | `https://painel-velotax.netlify.app` (ou URL do painel na Vercel) |
 
-### Vercel (Painel)
+### Netlify / Vercel (Painel)
 
 | Nome | Valor (exemplo) |
 |------|------------------|
-| DATABASE_URL | `postgresql://user:pass@host:5432/db?schema=public` |
-| NEXT_PUBLIC_API_URL | `https://whatsapp-api-xxxx.onrender.com` |
-| NEXT_PUBLIC_DEFAULT_JID | `120363400851545835@g.us` |
+| NEXT_PUBLIC_API_URL | `https://whatsapp-api-y40p.onrender.com` |
+| NEXT_PUBLIC_DEFAULT_JID | `120363400851545835@g.us` (copiar de `/grupos` na API) |
 
 ---
 
@@ -114,7 +111,7 @@ Depois: **Redeploy** do projeto.
 1. Deploy da **API no Render** (disco + variáveis) → escanear QR
 2. Abrir **/grupos** na API e copiar o **id** do grupo
 3. Deploy do **painel na Vercel** com as 3 variáveis (incluindo o id em NEXT_PUBLIC_DEFAULT_JID)
-4. No Render, conferir se **PANEL_URL** é a URL do painel na Vercel
+4. No Render, conferir se **PANEL_URL** é a URL do painel (Netlify ou Vercel)
 
 Pronto: envio pelo painel e auto-status por reação ✅/❌ funcionando.
 
