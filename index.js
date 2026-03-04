@@ -12,6 +12,7 @@ let makeWASocket;
 let useMultiFileAuthState;
 let DisconnectReason;
 const fs = require('fs');
+const path = require('path');
 const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
 const cors = require('cors');
@@ -25,11 +26,20 @@ app.use(cors());
 let sock = null;
 let isConnected = false;
 let reconnecting = false;
+/** Considera conectado se isConnected ou se o socket WebSocket estiver OPEN (evita dessincronia com evento close) */
+const isWhatsAppConnected = () => isConnected || (sock && sock.ws && sock.ws.readyState === 1);
 /** Último QR em data URL para servir em GET /qr (painel/escaneamento) */
 let lastQrDataUrl = null;
 /** Backoff em ms ao receber 405 (evitar loop e dar tempo do servidor enviar QR) */
 let reconnectDelay405 = 5000;
 const RECONNECT_DELAY_405_MAX = 60000;
+/** Backoff para 440 (connectionReplaced): esperar bem mais para o servidor liberar a sessão */
+let reconnectDelay440 = 120000; // 2 min inicial
+const RECONNECT_DELAY_440_MAX = 300000; // 5 min máximo
+let reconnectDelay515 = 30000;
+const RECONNECT_DELAY_515_MAX = 90000;
+/** Contador de 440 seguidos: após 3, forçar sessão nova (apagar auth e pedir QR) */
+let consecutive440Count = 0;
 
 // Meta e stream de respostas em memória (não persistente)
 const metaByMessageId = new Map(); // messageId -> { cpf, solicitacao }
@@ -38,6 +48,35 @@ const recentMax = 200;
 const sseClients = new Set(); // Set<{ res, agent: string|null }>
 
 const norm = (s = '') => String(s).toLowerCase().trim().replace(/\s+/g, ' ');
+
+/** Remove pasta auth (no Windows rmSync pode falhar com ENOTEMPTY; fallback: apagar conteúdo manualmente) */
+function removeAuthDir() {
+  const authPath = path.join(process.cwd(), 'auth');
+  if (!fs.existsSync(authPath)) return;
+  try {
+    fs.rmSync(authPath, { recursive: true, force: true });
+    return;
+  } catch (e) {
+    if (e.code !== 'ENOTEMPTY' && e.code !== 'EBUSY' && e.code !== 'EPERM') {
+      console.log('Erro ao apagar auth:', e.message);
+      return;
+    }
+  }
+  try {
+    function rmRecursive(dir) {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const ent of entries) {
+        const full = path.join(dir, ent.name);
+        if (ent.isDirectory()) rmRecursive(full);
+        else fs.unlinkSync(full);
+      }
+      fs.rmdirSync(dir);
+    }
+    rmRecursive(authPath);
+  } catch (inner) {
+    console.log('Erro ao apagar auth:', inner.message);
+  }
+}
 
 function publishReply(ev) {
   try {
@@ -174,16 +213,21 @@ async function connect() {
 
     if (qr) {
       reconnectDelay405 = 5000;
-      console.log('\nESCANEIE O QR CODE AGORA:\n');
+      console.log('\n========== ESCANEIE O QR CODE AGORA ==========\n');
       qrcode.generate(qr, { small: true });
       QRCode.toDataURL(qr).then((url) => { lastQrDataUrl = url; }).catch(() => {});
+      const base = process.env.RENDER_EXTERNAL_URL || process.env.API_PUBLIC_URL || process.env.NGROK_URL || '';
+      if (base) console.log('\nOu abra no navegador:', base.replace(/\/$/, '') + '/qr\n');
     }
 
     if (connection === 'open') {
       isConnected = true;
       lastQrDataUrl = null;
       reconnecting = false;
+      consecutive440Count = 0;
       reconnectDelay405 = 5000;
+      reconnectDelay440 = 120000;
+      reconnectDelay515 = 30000;
       console.log('\nWHATSAPP CONECTADO! API PRONTA!');
       const url = process.env.RENDER_EXTERNAL_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
       if (url) console.log(`API ONLINE: ${url}/send`);
@@ -192,23 +236,51 @@ async function connect() {
     if (connection === 'close') {
       isConnected = false;
 
-      const reason = lastDisconnect?.error?.output?.statusCode;
-      console.log('Status de disconnect:', reason);
+      // statusCode pode vir como número ou string (ex.: Render)
+      const raw = lastDisconnect?.error?.output?.statusCode;
+      const reason = raw != null ? Number(raw) : raw;
+      console.log('Status de disconnect:', reason, raw !== reason ? `(raw: ${raw})` : '');
 
-      // 401 = loggedOut; 405 = Method Not Allowed (sessão/versão inválida) -> forçar novo QR
-      const precisaNovoQR = reason === DisconnectReason.loggedOut || reason === 405;
-      const delayMs = reason === 405 ? reconnectDelay405 : 2000;
-      if (precisaNovoQR) {
-        console.log(reason === 405 ? `405 (sessão inválida) -> apagando auth. Reconectando em ${delayMs / 1000}s...` : 'DESLOGADO -> apagando auth e pedindo QR novamente...');
-        try { fs.rmSync('auth', { recursive: true, force: true }); } catch (e) { console.log('Erro ao apagar auth:', e.message); }
-        if (reason === 405) {
-          reconnectDelay405 = Math.min(RECONNECT_DELAY_405_MAX, reconnectDelay405 + 10000);
+      // 401 = loggedOut; 405 = Method Not Allowed (sessão inválida) -> SEMPRE apagar auth e mostrar QR
+      // 440 = connectionReplaced; 515 = restartRequired
+      let precisaNovoQR = reason === DisconnectReason.loggedOut || reason === 401 || reason === 405;
+      let delayMs = 2000;
+      if (reason === 405 || reason === 401) {
+        delayMs = Math.max(reason === 405 ? reconnectDelay405 : 5000, 8000); // mínimo 8s para auth limpar (Render disk)
+        if (reason === 405) reconnectDelay405 = Math.min(RECONNECT_DELAY_405_MAX, reconnectDelay405 + 10000);
+      } else if (reason === 440) {
+        consecutive440Count += 1;
+        delayMs = reconnectDelay440;
+        reconnectDelay440 = Math.min(RECONNECT_DELAY_440_MAX, reconnectDelay440 + 30000);
+        if (consecutive440Count >= 3) {
+          precisaNovoQR = true;
+          consecutive440Count = 0;
+          console.log('440 em loop (3x) -> apagando auth e pedindo novo QR. Feche WhatsApp Web e outras instâncias da API.');
+        } else {
+          console.log(`440 (connectionReplaced) [${consecutive440Count}/3] -> reconectando em ${Math.round(delayMs / 1000)}s. Feche outras instâncias e WhatsApp Web no mesmo número.`);
         }
-      } else {
-        console.log('Desconectado -> tentando reconectar sem pedir QR...');
+      } else if (reason === 515) {
+        delayMs = reconnectDelay515;
+        reconnectDelay515 = Math.min(RECONNECT_DELAY_515_MAX, reconnectDelay515 + 15000);
+        console.log(`515 (restartRequired) -> reconectando em ${delayMs / 1000}s (próx. até ${reconnectDelay515 / 1000}s)`);
+      }
+      if (precisaNovoQR) {
+        removeAuthDir();
+        if (reason === 405 || reason === 401) {
+          console.log(`${reason} -> auth apagado. Em ${Math.round(delayMs / 1000)}s vai pedir novo QR. Abra a URL /qr no navegador para escanear (ex.: https://seu-app.onrender.com/qr)`);
+        } else {
+          console.log(reason === 440 ? '440 em loop -> apagando auth. Escaneie o QR em /qr (apenas esta instância rodando).' : 'DESLOGADO -> apagando auth. Abra /qr para escanear.');
+        }
+      } else if (reason !== 440 && reason !== 515) {
+        console.log('Desconectado -> reconectando em', Math.round(delayMs / 1000), 's...');
       }
 
+      const previousSock = sock;
+      sock = null;
       setTimeout(() => {
+        if (previousSock && previousSock.ws) {
+          try { previousSock.ws.close(); } catch (_) {}
+        }
         reconnecting = false;
         connect();
       }, delayMs);
@@ -436,11 +508,12 @@ app.get('/qr', (req, res) => {
  */
 app.get('/ping', (req, res) => {
   try {
+    const connected = isWhatsAppConnected();
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
       uptime: Math.floor(process.uptime()),
-      whatsapp: isConnected ? 'connected' : 'disconnected',
+      whatsapp: connected ? 'connected' : 'disconnected',
       message: 'API está ativa e funcionando'
     });
   } catch (error) {
@@ -467,7 +540,7 @@ app.get('/health', async (req, res) => {
         total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB',
         rss: Math.round(process.memoryUsage().rss / 1024 / 1024) + ' MB'
       },
-      whatsapp: isConnected ? 'connected' : 'disconnected',
+      whatsapp: isWhatsAppConnected() ? 'connected' : 'disconnected',
       nodeVersion: process.version,
       platform: process.platform,
       pingEnabled: process.env.PING_ENABLED !== 'false',
@@ -530,7 +603,7 @@ app.post('/send', async (req, res) => {
   const destino = jid || numero;
   console.log(`[TENTATIVA] ${destino}: ${String(mensagem || '').substring(0, 80)}...`);
 
-  if (!isConnected || !sock) {
+  if (!isWhatsAppConnected() || !sock) {
     return res.status(503).json({ ok: false, error: 'WhatsApp desconectado' });
   }
 
@@ -644,7 +717,7 @@ app.post('/send', async (req, res) => {
 
 // Lista de grupos (opcional)
 app.get('/grupos', async (req, res) => {
-  if (!isConnected || !sock) {
+  if (!isWhatsAppConnected() || !sock) {
     return res.status(503).json({ ok: false, error: 'WhatsApp desconectado' });
   }
 
@@ -678,7 +751,7 @@ async function resolveParticipantToPN(participantJid) {
 // Em grupo o key DEVE usar participant = PN (@s.whatsapp.net). @lid faz o WhatsApp descartar a reação.
 app.post('/react', async (req, res) => {
   const { messageId, jid, participant } = req.body || {};
-  if (!isConnected || !sock) {
+  if (!isWhatsAppConnected() || !sock) {
     return res.status(503).json({ ok: false, error: 'WhatsApp desconectado' });
   }
   if (!messageId || !jid) {
