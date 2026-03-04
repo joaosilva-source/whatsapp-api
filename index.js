@@ -185,8 +185,10 @@ async function connect() {
       reconnecting = false;
       reconnectDelay405 = 5000;
       console.log('\nWHATSAPP CONECTADO! API PRONTA!');
-      const url = process.env.RENDER_EXTERNAL_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
-      if (url) console.log(`API ONLINE: ${url}/send`);
+      const url = process.env.RENDER_EXTERNAL_URL || process.env.API_PUBLIC_URL || process.env.NGROK_URL
+        || (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : null);
+      if (url && !url.includes('undefined')) console.log(`API ONLINE: ${url}/send`);
+      else console.log(`API ONLINE: http://localhost:${process.env.PORT || 3000}/send (defina API_PUBLIC_URL ou NGROK_URL no .env para a URL pública)`);
     }
 
     if (connection === 'close') {
@@ -408,7 +410,9 @@ loadBaileysAndConnect();
 
 // Health
 app.get('/', (req, res) => {
-  const url = process.env.RENDER_EXTERNAL_URL || `https://${req.headers.host}`;
+  const url = process.env.RENDER_EXTERNAL_URL || process.env.API_PUBLIC_URL || process.env.NGROK_URL
+    || (req.headers.host && !String(req.headers.host).includes('undefined') ? `https://${req.headers.host}` : null)
+    || `http://localhost:${process.env.PORT || 3000}`;
   res.send(`Velotax WhatsApp API - ONLINE\n\nPOST: ${url}/send\nStatus: ${isConnected ? 'CONECTADO' : 'Desconectado'}`);
 });
 
