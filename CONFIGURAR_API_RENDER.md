@@ -43,6 +43,8 @@ PORT=3000
 PANEL_URL=https://painel-velotax.netlify.app
 ```
 
+**Importante:** Use só a URL base do painel (ex.: `https://painel-velotax.netlify.app`), **sem** caminho no final. A API usa essa URL para chamar `/api/requests/auto-status` e atualizar o status quando alguém reage ✅/❌ no WhatsApp. Se a API estiver no **Render**, `PANEL_URL` tem de ser a URL **pública** do painel (Netlify/Vercel), não `localhost`, senão o “fetch failed” e os status não atualizam.
+
 Se o painel estiver na Vercel, use a URL do painel na Vercel (ex.: `https://seu-painel.vercel.app`). Sem barra no final.
 
 Opcionais (evitar sleep / respostas citadas):

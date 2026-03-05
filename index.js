@@ -145,13 +145,19 @@ function isReactorAllowed(reactorDigits) {
  * Prioridade: painel (PANEL_URL) — onde estão as solicitações/requests; fallback: Velohub (BACKEND_URL)
  */
 async function atualizarStatusViaReacao(waMessageId, reaction, reactorDigits) {
-  const PANEL_URL = (process.env.PANEL_URL || process.env.PAINEL_URL || '').replace(/\/$/, '');
+  let panelBase = (process.env.PANEL_URL || process.env.PAINEL_URL || '').trim().replace(/\/$/, '');
+  if (panelBase) {
+    try {
+      const u = new URL(panelBase);
+      panelBase = u.origin;
+    } catch (_) {}
+  }
   const BACKEND_URL = process.env.BACKEND_URL ||
                       process.env.VELOHUB_BACKEND_URL ||
                       'https://velohub-278491073220.us-east1.run.app';
-  // Painel: /api/requests/auto-status (Request por waMessageId); Velohub: /api/escalacoes/solicitacoes/auto-status
-  const url = PANEL_URL
-    ? `${PANEL_URL}/api/requests/auto-status`
+  // Painel: sempre /api/requests/auto-status na origem do painel (evita path duplicado)
+  const url = panelBase
+    ? `${panelBase}/api/requests/auto-status`
     : `${BACKEND_URL}/api/escalacoes/solicitacoes/auto-status`;
 
   const body = {
